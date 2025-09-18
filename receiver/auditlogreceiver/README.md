@@ -15,9 +15,26 @@ The receiver implements a persistence memory pattern:
 
 ![Audit Log Receiver Architecture](internal/auditLogReciver.jpeg)
 
+### Component Details
+
+**Receiver**
+- Creates a UUID and timestamp for every log received
+- UUID serves as the key in storage (map-based storage) for retrieval
+- Timestamp prevents duplicate processing of the same log
+
+**Persistence Storage**
+- Uses the storage extension from OpenTelemetry: [storage extension](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/extension/storage)
+- Stored as key-value pairs with user-configurable backend options (SQL, Redis, filesystem)
+- Provides user-defined persistence guarantees
+
+**Retry Goroutine**
+- Runs in a loop every X seconds, checking for logs older than X seconds in storage
+- Reduces the chance of processing the same log multiple times
+- Best practice: tune `ProcessAgeThreshold` to align with processing timeout settings
+
 The diagram above illustrates the complete flow of audit log processing, including:
 
-- **Main Flow**: SDK → Receiver → Processors → Exporters → Sinks
+- **Main Flow**: SDK → Receiver → Storage → Processors → Exporters → Sinks
 - **Persistence Mechanism**: Storage of audit logs with keys for durability
 - **Background Processing**: Separate goroutine for processing stored logs based on age threshold
 - **Retry Logic**: Failed processing attempts are retried through the persistence mechanism
@@ -35,15 +52,31 @@ receivers:
 ### Complete Example
 
 ```yaml
+extensions:
+  file_storage:
+    directory: ./storage
+    create_directory: true
+    timeout: 1s
+    compaction:
+      on_start: true
+      directory: ./storage/compaction
+      max_transaction_size: 1000
+
 receivers:
   auditlogreceiver:
-    endpoint: 0.0.0.0:8080
+    endpoint: 0.0.0.0:4310
+    storage: file_storage
+    # How often to process stored logs (default: 60s)
+    process_interval: 30s
+    # How old logs must be before processing (default: 60s)
+    process_age_threshold: 30s
 
 exporters:
   logging:
     loglevel: debug
 
 service:
+  extensions: [file_storage]
   pipelines:
     logs:
       receivers: [auditlogreceiver]
@@ -98,8 +131,8 @@ Audit log entries are stored as JSON with the following structure:
 
 3. **Test the receiver:**
    ```bash
-  cd /test-standalone
-  go run main.go
+    cd /test-standalone
+    go run main.go
 
 ### Manual Testing
 
@@ -122,3 +155,8 @@ Expected response: `HTTP 202 Accepted`
 - **OTLP Protocol Support**: Accepts both JSON and protobuf content types
 
 
+## TODO
+
+- **Circuit Breaker**: Implement circuit breaker for retry operations
+- **Logging Improvements**: Fix logging of processed logs (count only valid ones)
+- **Persistence Queue Analysis**: Investigate how persistence queue in exporters may affect the amount of logs delivered and overall flow
