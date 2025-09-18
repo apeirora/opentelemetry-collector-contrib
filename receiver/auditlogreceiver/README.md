@@ -1,6 +1,6 @@
 # Audit Log Receiver
 
-The Audit Log Receiver is an OpenTelemetry Collector receiver that accepts audit log data via HTTP and processes it asynchronously using file storage for persistence.
+The Audit Log Receiver is an OpenTelemetry Collector receiver that accepts audit log data via HTTP and processes it asynchronously using storage for persistence.
 
 ## Architecture
 
@@ -10,6 +10,17 @@ The receiver implements a persistence memory pattern:
 2. **Immediate Response**: Returns HTTP 202 Accepted immediately after storing the request
 3. **File Storage**: Uses the file storage extension for persistence
 4. **Background Processing**: A goroutine processes stored audit logs asynchronously
+
+### Architecture Diagram
+
+![Audit Log Receiver Architecture](internal/auditLogReciver.jpeg)
+
+The diagram above illustrates the complete flow of audit log processing, including:
+
+- **Main Flow**: SDK → Receiver → Processors → Exporters → Sinks
+- **Persistence Mechanism**: Storage of audit logs with keys for durability
+- **Background Processing**: Separate goroutine for processing stored logs based on age threshold
+- **Retry Logic**: Failed processing attempts are retried through the persistence mechanism
 
 ## Configuration
 
@@ -68,7 +79,6 @@ Audit log entries are stored as JSON with the following structure:
   "id": "audit_log_1",
   "timestamp": "2024-01-01T00:00:00Z",
   "body": "{\"event\": \"user_login\", \"user\": \"john.doe\"}",
-  "processed": false
 }
 ```
 
@@ -88,13 +98,8 @@ Audit log entries are stored as JSON with the following structure:
 
 3. **Test the receiver:**
    ```bash
-   # On Windows
-   test_audit_log.bat
-   
-   # On Linux/Mac
-   chmod +x test_audit_log.sh
-   ./test_audit_log.sh
-   ```
+  cd /test-standalone
+  go run main.go
 
 ### Manual Testing
 
@@ -116,11 +121,4 @@ Expected response: `HTTP 202 Accepted`
 - **Scalability**: Can handle burst traffic by queuing requests
 - **OTLP Protocol Support**: Accepts both JSON and protobuf content types
 
-## Architecture Changes
 
-This receiver has been refactored from using Kafka to using in-memory storage:
-
-- **Before**: Direct Kafka producer integration
-- **After**: In-memory storage with background processing
-
-The new architecture provides better reliability and simpler deployment without external dependencies.
