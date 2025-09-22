@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 	"os/signal"
@@ -20,6 +21,8 @@ import (
 	"go.uber.org/zap"
 )
 
+var errCounter = 0
+
 type testConsumer struct {
 	logger *zap.Logger
 }
@@ -29,6 +32,11 @@ func (tc *testConsumer) Capabilities() consumer.Capabilities {
 }
 
 func (tc *testConsumer) ConsumeLogs(ctx context.Context, logs plog.Logs) error {
+	tc.logger.Info("ErrCounter:%v", zap.Int("errCounter", errCounter))
+	if errCounter < 10 {
+		errCounter++
+		return errors.New("test error")
+	}
 	tc.logger.Info("Received logs", zap.Int("count", logs.LogRecordCount()))
 	for i := 0; i < logs.ResourceLogs().Len(); i++ {
 		for j := 0; j < logs.ResourceLogs().At(i).ScopeLogs().Len(); j++ {

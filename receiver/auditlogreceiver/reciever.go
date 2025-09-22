@@ -19,13 +19,16 @@ import (
 )
 
 // TODO
-//circut breaker for retry operations
 //Fix loging of processed log(count only vaild one)
 
 // what will happen if we implement persistance que in exporter?
 // entry point, should it be same as for logs, should we check for audit logs?
 // filtering for attribute or sth else
-const keysListKey = "__keys_list__"
+const (
+	keysListKey            = "__keys_list__"
+	defaultTickerTime      = 30 * time.Second
+	defaultProcessInterval = 30 * time.Second
+)
 
 type AuditLogEntry struct {
 	ID        string    `json:"id"`
@@ -42,6 +45,8 @@ type auditLogReceiver struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
+
+	circuitBreaker *CircuitBreaker
 }
 
 func NewReceiver(cfg *Config, set receiver.Settings, consumer consumer.Logs) (*auditLogReceiver, error) {
@@ -54,6 +59,8 @@ func NewReceiver(cfg *Config, set receiver.Settings, consumer consumer.Logs) (*a
 		ctx:      ctx,
 		cancel:   cancel,
 	}
+
+	r.circuitBreaker = NewCircuitBreaker(cfg.CircuitBreaker, set.Logger)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/logs", r.handleAuditLogs)
@@ -111,10 +118,14 @@ func (r *auditLogReceiver) Shutdown(ctx context.Context) error {
 }
 
 func (r *auditLogReceiver) processAuditLog(entry *AuditLogEntry) error {
+	shouldProcess, err := r.circuitBreaker.CheckCircuitBreakerState(entry.ID)
+	if !shouldProcess {
+		return err
+	}
+
 	r.logger.Info("Processing audit log",
 		zap.String("id", entry.ID),
-		zap.Time("timestamp", entry.Timestamp),
-		zap.ByteString("body", entry.Body))
+		zap.Time("timestamp", entry.Timestamp))
 
 	logs := plog.NewLogs()
 	resourceLogs := logs.ResourceLogs().AppendEmpty()
@@ -130,7 +141,15 @@ func (r *auditLogReceiver) processAuditLog(entry *AuditLogEntry) error {
 	attrs.PutStr("receiver", "auditlogreceiver")
 
 	ctx := context.Background()
-	return r.consumer.ConsumeLogs(ctx, logs)
+
+	consumeErr := r.consumer.ConsumeLogs(ctx, logs)
+	if consumeErr != nil {
+		r.circuitBreaker.RecordFailure()
+		return consumeErr
+	}
+
+	r.circuitBreaker.RecordSuccess()
+	return nil
 }
 
 func (r *auditLogReceiver) processStoredLogsLoop() {
@@ -138,7 +157,7 @@ func (r *auditLogReceiver) processStoredLogsLoop() {
 
 	interval := r.cfg.ProcessInterval
 	if interval == 0 {
-		interval = 60 * time.Second
+		interval = defaultTickerTime
 	}
 
 	ticker := time.NewTicker(interval)
@@ -171,7 +190,7 @@ func (r *auditLogReceiver) processStoredLogs() {
 
 	ageThreshold := r.cfg.ProcessAgeThreshold
 	if ageThreshold == 0 {
-		ageThreshold = 60 * time.Second
+		ageThreshold = defaultProcessInterval
 	}
 
 	cutoffTime := time.Now().Add(-ageThreshold)
@@ -197,11 +216,20 @@ func (r *auditLogReceiver) processStoredLogs() {
 			continue
 		}
 
-		if err := r.processAuditLog(&entry); err != nil {
-			r.logger.Error("Failed to process audit log", zap.String("key", key), zap.Error(err))
+		// Check circuit breaker state
+		shouldProcess, err := r.circuitBreaker.CheckCircuitBreakerState(key)
+		if !shouldProcess {
+			r.logger.Debug("Circuit breaker is open, skipping processing", zap.String("key", key))
 			continue
 		}
 
+		if err := r.processAuditLog(&entry); err != nil {
+			r.logger.Error("Failed to process audit log", zap.String("key", key), zap.Error(err))
+
+			continue
+		}
+
+		// Success - remove the entry
 		if err := r.storage.Delete(context.Background(), key); err != nil {
 			r.logger.Error("Failed to delete processed entry", zap.String("key", key), zap.Error(err))
 		} else {
@@ -351,7 +379,6 @@ func (r *auditLogReceiver) handleAuditLogs(w http.ResponseWriter, req *http.Requ
 	err = r.processAuditLog(&entry)
 	if err != nil {
 		r.logger.Error("Failed to process audit log entry", zap.Error(err))
-		return
 	} else {
 		err = r.storage.Delete(context.Background(), key)
 		if err != nil {
