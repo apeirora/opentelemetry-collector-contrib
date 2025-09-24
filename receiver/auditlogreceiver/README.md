@@ -229,6 +229,78 @@ docker pull ghcr.io/apeirora/opentelemetry-collector-contrib/otelcontribcol-audi
 docker pull ghcr.io/apeirora/opentelemetry-collector-contrib/otelcontribcol-auditlog:latest
 ```
 
+## Running the Docker Image
+
+### Basic Run Command
+
+```bash
+# Run with basic configuration
+docker run -d \
+  --name otel-collector-auditlog \
+  -p 8080:8080 \
+  -p 4317:4317 \
+  -p 4318:4318 \
+  -v "${PWD}/storage:/var/lib/otelcol/storage" \
+  "ghcr.io/apeirora/opentelemetry-collector-contrib/otelcontribcol-auditlog:auditlogreceiver"
+```
+
+### Run with Custom Configuration
+
+```bash
+# Run with custom config file
+docker run -d \
+  --name otel-collector-auditlog \
+  -p 8080:8080 \
+  -p 4317:4317 \
+  -p 4318:4318 \
+  -v "${PWD}/storage:/var/lib/otelcol/storage" \
+  -v "${PWD}/custom-config.yaml:/etc/otel/config.yaml" \
+  "ghcr.io/apeirora/opentelemetry-collector-contrib/otelcontribcol-auditlog:auditlogreceiver"
+```
+
+### Container Management Commands
+
+```bash
+# Check if container is running
+docker ps
+
+# View container logs
+docker logs otel-collector-auditlog
+
+# Follow logs in real-time
+docker logs -f otel-collector-auditlog
+
+# Stop the container
+docker stop otel-collector-auditlog
+
+# Start the container
+docker start otel-collector-auditlog
+
+# Restart the container
+docker restart otel-collector-auditlog
+
+# Remove the container
+docker rm otel-collector-auditlog
+
+# Remove the container and its volumes
+docker rm -v otel-collector-auditlog
+```
+
+### Test the Running Container
+
+```bash
+# Test with PowerShell
+Invoke-WebRequest -Uri "http://localhost:8080/v1/logs" -Method POST -ContentType "application/json" -Body '{"message": "Test audit log", "timestamp": "2024-01-01T00:00:00Z"}'
+
+# Test with curl
+curl -X POST http://localhost:8080/v1/logs \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Test audit log", "timestamp": "2024-01-01T00:00:00Z"}'
+
+# Check container health
+docker inspect otel-collector-auditlog --format='{{.State.Health.Status}}'
+```
+
 ## Development
 
 ### Local Development
@@ -318,6 +390,5 @@ docker inspect otel-collector-auditlog
 
 ## TODO
 
-- **Circuit Breaker**: ✅ Implemented circuit breaker for retry operations
 - **Logging Improvements**: Fix logging of processed logs (count only valid ones)
 - **Persistence Queue Analysis**: Investigate how persistence queue in exporters may affect the amount of logs delivered and overall flow
