@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/extension/storage/dbstorage"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/extension/storage/filestorage"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/auditlogreceiver"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/component/componenttest"
@@ -55,23 +55,23 @@ func main() {
 	logger, _ := zap.NewDevelopment()
 	defer logger.Sync()
 
-	// Clean up any existing database file to avoid corruption issues
-	dbFile := "./auditlog.db"
-	if _, err := os.Stat(dbFile); err == nil {
-		logger.Info("Removing existing database file to avoid corruption")
-		if err := os.Remove(dbFile); err != nil {
-			logger.Warn("Failed to remove existing database file", zap.Error(err))
+	// Clean up any existing storage directory to avoid corruption issues
+	storageDir := "./auditlog_storage"
+	if _, err := os.Stat(storageDir); err == nil {
+		logger.Info("Removing existing storage directory to avoid corruption")
+		if err := os.RemoveAll(storageDir); err != nil {
+			logger.Warn("Failed to remove existing storage directory", zap.Error(err))
 		}
 	}
 
-	// Create SQL storage extension
-	storageFactory := dbstorage.NewFactory()
-	storageCfg := storageFactory.CreateDefaultConfig().(*dbstorage.Config)
-	storageCfg.DriverName = "sqlite3"
-	storageCfg.DataSource = "./auditlog.db"
+	// Create file storage extension
+	storageFactory := filestorage.NewFactory()
+	storageCfg := storageFactory.CreateDefaultConfig().(*filestorage.Config)
+	storageCfg.Directory = storageDir
+	storageCfg.CreateDirectory = true
 
 	storageExt, err := storageFactory.Create(context.Background(), extension.Settings{
-		ID:                component.NewID(component.MustNewType("db_storage")),
+		ID:                component.NewID(component.MustNewType("file_storage")),
 		TelemetrySettings: component.TelemetrySettings{Logger: logger},
 	}, storageCfg)
 	if err != nil {
@@ -83,44 +83,44 @@ func main() {
 		log.Fatalf("Failed to start storage extension: %v", err)
 	}
 
-	// Test SQL database connection with timeout
-	logger.Info("Testing SQL database connection...")
+	// Test file storage connection with timeout
+	logger.Info("Testing file storage connection...")
 	storageExtTyped, ok := storageExt.(storage.Extension)
 	if !ok {
 		log.Fatalf("Storage extension does not implement storage.Extension")
 	}
 
-	// Create a timeout context for SQL operations
-	sqlCtx, sqlCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer sqlCancel()
+	// Create a timeout context for storage operations
+	storageCtx, storageCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer storageCancel()
 
-	testClient, err := storageExtTyped.GetClient(sqlCtx, component.KindReceiver, component.NewID(component.MustNewType("db_storage")), "test")
+	testClient, err := storageExtTyped.GetClient(storageCtx, component.KindReceiver, component.NewID(component.MustNewType("file_storage")), "test")
 	if err != nil {
-		log.Fatalf("Failed to get SQL test client: %v", err)
+		log.Fatalf("Failed to get file storage test client: %v", err)
 	}
 
-	// Test basic SQL operations
+	// Test basic file storage operations
 	testKey := "connection_test"
 	testValue := []byte("test_value")
-	if err := testClient.Set(sqlCtx, testKey, testValue); err != nil {
-		log.Fatalf("Failed to set test value in SQL database: %v", err)
+	if err := testClient.Set(storageCtx, testKey, testValue); err != nil {
+		log.Fatalf("Failed to set test value in file storage: %v", err)
 	}
 
-	retrievedValue, err := testClient.Get(sqlCtx, testKey)
+	retrievedValue, err := testClient.Get(storageCtx, testKey)
 	if err != nil {
-		log.Fatalf("Failed to get test value from SQL database: %v", err)
+		log.Fatalf("Failed to get test value from file storage: %v", err)
 	}
 
 	if string(retrievedValue) != string(testValue) {
-		log.Fatalf("SQL test failed: expected %s, got %s", string(testValue), string(retrievedValue))
+		log.Fatalf("File storage test failed: expected %s, got %s", string(testValue), string(retrievedValue))
 	}
 
 	// Clean up test data
-	if err := testClient.Delete(sqlCtx, testKey); err != nil {
+	if err := testClient.Delete(storageCtx, testKey); err != nil {
 		logger.Warn("Failed to clean up test data", zap.Error(err))
 	}
 
-	logger.Info("SQL database connection test successful!")
+	logger.Info("File storage connection test successful!")
 
 	// Create the receiver factory
 	factory := auditlogreceiver.NewFactory()
@@ -128,7 +128,7 @@ func main() {
 	// Create config with specific endpoint and storage
 	cfg := factory.CreateDefaultConfig().(*auditlogreceiver.Config)
 	cfg.Endpoint = "0.0.0.0:4310"
-	cfg.StorageID = component.NewID(component.MustNewType("db_storage"))
+	cfg.StorageID = component.NewID(component.MustNewType("file_storage"))
 
 	// Create consumer
 	consumer := &testConsumer{logger: logger}
@@ -160,7 +160,7 @@ func main() {
 		log.Fatalf("Failed to start receiver: %v", err)
 	}
 
-	logger.Info("Audit log receiver started successfully with SQL storage")
+	logger.Info("Audit log receiver started successfully with file storage")
 	logger.Info("You can now send POST requests to http://localhost:4310/v1/logs with JSON data")
 
 	// Wait for interrupt signal
@@ -190,6 +190,6 @@ type simpleHost struct {
 
 func (h *simpleHost) GetExtensions() map[component.ID]component.Component {
 	return map[component.ID]component.Component{
-		component.NewID(component.MustNewType("db_storage")): h.storageExt,
+		component.NewID(component.MustNewType("file_storage")): h.storageExt,
 	}
 }
