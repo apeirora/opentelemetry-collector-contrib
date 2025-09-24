@@ -2,6 +2,53 @@
 
 The Audit Log Receiver is an OpenTelemetry Collector receiver that accepts audit log data via HTTP and processes it asynchronously using storage for persistence.
 
+## Quick Start with Docker
+
+### Using Published Docker Image (Recommended)
+
+The easiest way to get started is using the pre-built Docker image from GitHub Container Registry:
+
+```bash
+# Pull the Docker image
+docker pull ghcr.io/apeirora/opentelemetry-collector-contrib/otelcontribcol-auditlog:auditlogreceiver
+
+# Run the container
+docker run -d \
+  --name otel-collector-auditlog \
+  -p 8080:8080 \
+  -p 4317:4317 \
+  -p 4318:4318 \
+  -v "${PWD}/storage:/var/lib/otelcol/storage" \
+  "ghcr.io/apeirora/opentelemetry-collector-contrib/otelcontribcol-auditlog:auditlogreceiver"
+```
+
+### Using Docker Compose
+
+```bash
+# Clone the repository
+git clone https://github.com/apeirora/opentelemetry-collector-contrib.git
+cd opentelemetry-collector-contrib
+
+# Run with docker-compose
+docker-compose up -d
+```
+
+### Test the Setup
+
+Send audit logs to the collector:
+
+```bash
+# PowerShell
+Invoke-WebRequest -Uri "http://localhost:8080/v1/logs" -Method POST -ContentType "application/json" -Body '{"message": "Test audit log", "timestamp": "2024-01-01T00:00:00Z"}'
+
+# Or with curl
+curl -X POST http://localhost:8080/v1/logs \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Test audit log", "timestamp": "2024-01-01T00:00:00Z"}'
+```
+
+**Expected Response**: `HTTP 202 Accepted`
+
 ## Architecture
 
 The receiver implements a persistence memory pattern:
@@ -39,6 +86,21 @@ The diagram above illustrates the complete flow of audit log processing, includi
 - **Background Processing**: Separate goroutine for processing stored logs based on age threshold
 - **Retry Logic**: Failed processing attempts are retried through the persistence mechanism
 
+## Features
+
+- **AuditLog Receiver**: HTTP endpoint for receiving audit logs
+- **Debug Exporter**: Console output for debugging
+- **File Storage**: Persistent storage for audit logs
+- **Circuit Breaker**: Protection against failures
+- **Docker Support**: Easy deployment with Docker
+- **GitHub Actions**: Automated Docker image builds
+
+## Endpoints
+
+- **AuditLog Receiver**: `http://localhost:8080/v1/logs`
+- **OTLP gRPC**: `localhost:4317` (optional)
+- **OTLP HTTP**: `localhost:4318` (optional)
+
 ## Configuration
 
 ### Receiver Configuration
@@ -47,6 +109,12 @@ The diagram above illustrates the complete flow of audit log processing, includi
 receivers:
   auditlogreceiver:
     endpoint: 0.0.0.0:8080
+    storage: file_storage
+    process_interval: 30s
+    process_age_threshold: 60s
+    circuit_breaker:
+      circuit_open_threshold: 5
+      circuit_open_duration: 1m
 ```
 
 ### Complete Example
@@ -54,33 +122,29 @@ receivers:
 ```yaml
 extensions:
   file_storage:
-    directory: ./storage
+    directory: /var/lib/otelcol/storage
     create_directory: true
-    timeout: 1s
-    compaction:
-      on_start: true
-      directory: ./storage/compaction
-      max_transaction_size: 1000
 
 receivers:
   auditlogreceiver:
-    endpoint: 0.0.0.0:4310
+    endpoint: 0.0.0.0:8080
     storage: file_storage
-    # How often to process stored logs (default: 60s)
     process_interval: 30s
-    # How old logs must be before processing (default: 60s)
-    process_age_threshold: 30s
+    process_age_threshold: 60s
+    circuit_breaker:
+      circuit_open_threshold: 5
+      circuit_open_duration: 1m
 
 exporters:
-  logging:
-    loglevel: debug
+  debug:
+    verbosity: detailed
 
 service:
   extensions: [file_storage]
   pipelines:
     logs:
       receivers: [auditlogreceiver]
-      exporters: [logging]
+      exporters: [debug]
 ```
 
 ## API Usage
@@ -146,6 +210,92 @@ curl -X POST http://localhost:8080/v1/logs \
 
 Expected response: `HTTP 202 Accepted`
 
+## GitHub Actions
+
+The project includes automated Docker image builds via GitHub Actions:
+
+- **Automatic Builds**: On push to `AuditLogReceiver` branch
+- **Container Registry**: Images published to GitHub Container Registry
+- **Multi-platform**: Supports Linux/AMD64 architecture
+- **Semantic Versioning**: Automatic tags for releases
+
+### Access Your Docker Image
+
+```bash
+# Pull the latest image
+docker pull ghcr.io/apeirora/opentelemetry-collector-contrib/otelcontribcol-auditlog:auditlogreceiver
+
+# View available tags
+docker pull ghcr.io/apeirora/opentelemetry-collector-contrib/otelcontribcol-auditlog:latest
+```
+
+## Development
+
+### Local Development
+
+```bash
+# Build locally
+make otelcontribcol
+
+# Run with local config
+./bin/otelcontribcol_windows_amd64.exe --config=auditlog-config.yaml
+```
+
+### Docker Development
+
+```bash
+# Build and run
+docker-compose up --build
+
+# View logs
+docker-compose logs -f
+
+# Stop
+docker-compose down
+```
+
+## Troubleshooting
+
+### Permission Issues
+
+If you encounter permission issues with storage:
+
+```bash
+# Create storage directory with proper permissions
+mkdir -p storage
+chmod 755 storage
+```
+
+### Container Not Starting
+
+Check container logs:
+
+```bash
+docker logs otel-collector-auditlog
+```
+
+### Port Already in Use
+
+Change the port mapping in `docker-compose.yml`:
+
+```yaml
+ports:
+  - "8081:8080"  # Use port 8081 instead
+```
+
+### Check Container Status
+
+```bash
+# Check if container is running
+docker ps
+
+# Check container logs
+docker logs otel-collector-auditlog
+
+# Check container details
+docker inspect otel-collector-auditlog
+```
+
 ## Benefits
 
 - **High Throughput**: Immediate HTTP responses allow for high request rates
@@ -153,10 +303,21 @@ Expected response: `HTTP 202 Accepted`
 - **Asynchronous Processing**: Background processing prevents blocking HTTP requests
 - **Scalability**: Can handle burst traffic by queuing requests
 - **OTLP Protocol Support**: Accepts both JSON and protobuf content types
+- **Docker Ready**: Pre-built Docker images available
+- **CI/CD**: Automated builds and deployments
 
+## File Structure
+
+```
+├── Dockerfile                 # Main Dockerfile
+├── docker-compose.yml        # Docker Compose configuration
+├── auditlog-config.yaml      # Collector configuration
+├── .github/workflows/        # GitHub Actions
+└── storage/                  # Persistent storage directory
+```
 
 ## TODO
 
-- **Circuit Breaker**: Implement circuit breaker for retry operations
+- **Circuit Breaker**: ✅ Implemented circuit breaker for retry operations
 - **Logging Improvements**: Fix logging of processed logs (count only valid ones)
 - **Persistence Queue Analysis**: Investigate how persistence queue in exporters may affect the amount of logs delivered and overall flow
