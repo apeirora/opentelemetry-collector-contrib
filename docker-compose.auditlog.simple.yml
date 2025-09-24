@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  otel-collector-auditlog:
+    build:
+      context: .
+      dockerfile: Dockerfile.auditlog
+    ports:
+      - "8080:8080"   # Auditlog receiver endpoint
+      - "4317:4317"   # OTLP gRPC receiver (optional)
+      - "4318:4318"   # OTLP HTTP receiver (optional)
+    volumes:
+      - ./storage:/var/lib/otelcol/storage
+    environment:
+      - OTEL_LOG_LEVEL=info
+    restart: unless-stopped
