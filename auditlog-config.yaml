@@ -1,0 +1,25 @@
+receivers:
+  auditlogreceiver:
+    endpoint: 0.0.0.0:8080
+    storage: file_storage
+    process_interval: 30s
+    process_age_threshold: 60s
+    circuit_breaker:
+      circuit_open_threshold: 5
+      circuit_open_duration: 1m
+
+exporters:
+  debug:
+    verbosity: detailed
+
+extensions:
+  file_storage:
+    directory: /var/lib/otelcol/storage
+    create_directory: true
+
+service:
+  extensions: [file_storage]
+  pipelines:
+    logs:
+      receivers: [auditlogreceiver]
+      exporters: [debug]
