@@ -10,11 +10,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal/errorutil"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
+	"go.opentelemetry.io/collector/consumer/consumererror"
 	"go.opentelemetry.io/collector/extension/xextension/storage"
 	"go.opentelemetry.io/collector/pdata/plog"
+	"go.opentelemetry.io/collector/pdata/plog/plogotlp"
 	"go.opentelemetry.io/collector/receiver"
+	"go.opentelemetry.io/collector/receiver/receiverhelper"
 	"go.uber.org/zap"
 )
 
@@ -47,10 +51,20 @@ type auditLogReceiver struct {
 	wg       sync.WaitGroup
 
 	circuitBreaker *CircuitBreaker
+	obsrecv        *receiverhelper.ObsReport
 }
 
 func NewReceiver(cfg *Config, set receiver.Settings, consumer consumer.Logs) (*auditLogReceiver, error) {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	obsrecv, err := receiverhelper.NewObsReport(receiverhelper.ObsReportSettings{
+		ReceiverID:             set.ID,
+		Transport:              "http",
+		ReceiverCreateSettings: set,
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	r := &auditLogReceiver{
 		logger:   set.Logger,
@@ -58,12 +72,15 @@ func NewReceiver(cfg *Config, set receiver.Settings, consumer consumer.Logs) (*a
 		cfg:      cfg,
 		ctx:      ctx,
 		cancel:   cancel,
+		obsrecv:  obsrecv,
 	}
 
 	r.circuitBreaker = NewCircuitBreaker(cfg.CircuitBreaker, set.Logger)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/logs", r.handleAuditLogs)
+	mux.HandleFunc("/v1/logs/", r.handleAuditLogs)       // Support OTLP standard endpoint
+	mux.HandleFunc("/v1/logs/export", r.handleAuditLogs) // OTLP standard export endpoint
 
 	r.server = &http.Server{
 		Addr:    cfg.Endpoint,
@@ -323,25 +340,36 @@ func (r *auditLogReceiver) removeFromKeysList(key string) {
 
 func (r *auditLogReceiver) handleAuditLogs(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
-		http.Error(w, "only POST allowed", http.StatusMethodNotAllowed)
+		errorutil.HTTPError(w, consumererror.NewPermanent(fmt.Errorf("only POST method allowed")))
 		return
 	}
 
 	contentType := req.Header.Get("Content-Type")
-	if contentType != "application/x-protobuf" && contentType != "application/json" {
-		http.Error(w, "unsupported content type, expected application/x-protobuf or application/json", http.StatusBadRequest)
+	if contentType != "application/x-protobuf" && contentType != "application/json" && contentType != "application/vnd.google.protobuf" {
+		errorutil.HTTPError(w, consumererror.NewPermanent(fmt.Errorf("unsupported content type %q, expected application/x-protobuf, application/vnd.google.protobuf, or application/json", contentType)))
 		return
 	}
 
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
-		http.Error(w, "failed to read body", http.StatusBadRequest)
+		errorutil.HTTPError(w, consumererror.NewPermanent(fmt.Errorf("failed to read request body: %w", err)))
 		return
 	}
 	defer req.Body.Close()
 
 	entryID := uuid.New().String()
 	key := entryID
+
+	if contentType == "application/x-protobuf" || contentType == "application/vnd.google.protobuf" {
+		err = r.handleOTLPProtobuf(w, req, body, entryID, key)
+		if err != nil {
+			r.logger.Error("Failed to handle OTLP protobuf request", zap.Error(err))
+			return
+		}
+		return
+	}
+
+	ctx := r.obsrecv.StartLogsOp(req.Context())
 
 	entry := AuditLogEntry{
 		ID:        entryID,
@@ -352,14 +380,16 @@ func (r *auditLogReceiver) handleAuditLogs(w http.ResponseWriter, req *http.Requ
 	entryData, err := json.Marshal(entry)
 	if err != nil {
 		r.logger.Error("Failed to marshal audit log entry", zap.Error(err))
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		errorutil.HTTPError(w, err)
+		r.obsrecv.EndLogsOp(ctx, "json", 0, err)
 		return
 	}
 
 	if r.storage != nil {
 		if err := r.storage.Set(context.Background(), key, entryData); err != nil {
 			r.logger.Error("Failed to store audit log entry", zap.String("key", key), zap.Error(err))
-			http.Error(w, "internal error", http.StatusInternalServerError)
+			errorutil.HTTPError(w, err)
+			r.obsrecv.EndLogsOp(ctx, "json", 0, err)
 			return
 		}
 
@@ -370,7 +400,8 @@ func (r *auditLogReceiver) handleAuditLogs(w http.ResponseWriter, req *http.Requ
 		r.logger.Info("Stored audit log entry", zap.String("id", entryID), zap.String("content_type", contentType))
 	} else {
 		r.logger.Error("Storage client not initialized")
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		errorutil.HTTPError(w, fmt.Errorf("storage client not initialized"))
+		r.obsrecv.EndLogsOp(ctx, "json", 0, fmt.Errorf("storage client not initialized"))
 		return
 	}
 
@@ -379,11 +410,106 @@ func (r *auditLogReceiver) handleAuditLogs(w http.ResponseWriter, req *http.Requ
 	err = r.processAuditLog(&entry)
 	if err != nil {
 		r.logger.Error("Failed to process audit log entry", zap.Error(err))
+		r.obsrecv.EndLogsOp(ctx, "json", 1, err)
 	} else {
 		err = r.storage.Delete(context.Background(), key)
 		if err != nil {
 			r.logger.Error("Failed to delete audit log entry", zap.Error(err))
 		}
 		r.removeFromKeysList(key)
+		r.obsrecv.EndLogsOp(ctx, "json", 1, nil)
 	}
+}
+
+// handleOTLPProtobuf handles OTLP protobuf format requests following standard OTLP patterns
+func (r *auditLogReceiver) handleOTLPProtobuf(w http.ResponseWriter, req *http.Request, body []byte, entryID, key string) error {
+	ctx := r.obsrecv.StartLogsOp(req.Context())
+
+	otlpReq := plogotlp.NewExportRequest()
+	if err := otlpReq.UnmarshalProto(body); err != nil {
+		r.logger.Error("Failed to unmarshal OTLP protobuf request", zap.Error(err))
+		errorutil.HTTPError(w, consumererror.NewPermanent(err))
+		r.obsrecv.EndLogsOp(ctx, "protobuf", 0, err)
+		return err
+	}
+
+	logs := otlpReq.Logs()
+	numRecords := logs.LogRecordCount()
+
+	if numRecords == 0 {
+		response := plogotlp.NewExportResponse()
+		responseData, err := response.MarshalProto()
+		if err != nil {
+			r.logger.Error("Failed to marshal OTLP response", zap.Error(err))
+			errorutil.HTTPError(w, err)
+			r.obsrecv.EndLogsOp(ctx, "protobuf", 0, err)
+			return err
+		}
+
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		w.WriteHeader(http.StatusOK)
+		_, err = w.Write(responseData)
+		r.obsrecv.EndLogsOp(ctx, "protobuf", 0, err)
+		return err
+	}
+
+	if r.storage != nil {
+		entry := AuditLogEntry{
+			ID:        entryID,
+			Timestamp: time.Now(),
+			Body:      body,
+		}
+
+		entryData, err := json.Marshal(entry)
+		if err != nil {
+			r.logger.Error("Failed to marshal audit log entry", zap.Error(err))
+			errorutil.HTTPError(w, err)
+			r.obsrecv.EndLogsOp(ctx, "protobuf", numRecords, err)
+			return err
+		}
+
+		if err := r.storage.Set(context.Background(), key, entryData); err != nil {
+			r.logger.Error("Failed to store audit log entry", zap.String("key", key), zap.Error(err))
+			errorutil.HTTPError(w, err)
+			r.obsrecv.EndLogsOp(ctx, "protobuf", numRecords, err)
+			return err
+		}
+
+		if err := r.addToKeysList(key); err != nil {
+			r.logger.Error("Failed to add key to keys list", zap.String("key", key), zap.Error(err))
+		}
+
+		r.logger.Info("Stored OTLP audit log entry", zap.String("id", entryID), zap.Int("log_records", numRecords))
+	}
+
+	err := r.consumer.ConsumeLogs(ctx, logs)
+
+	response := plogotlp.NewExportResponse()
+	if err != nil {
+		r.logger.Error("Failed to consume OTLP logs", zap.Error(err))
+	}
+
+	responseData, marshalErr := response.MarshalProto()
+	if marshalErr != nil {
+		r.logger.Error("Failed to marshal OTLP response", zap.Error(marshalErr))
+		errorutil.HTTPError(w, marshalErr)
+		r.obsrecv.EndLogsOp(ctx, "protobuf", numRecords, marshalErr)
+		return marshalErr
+	}
+
+	w.Header().Set("Content-Type", "application/x-protobuf")
+	w.WriteHeader(http.StatusOK)
+	_, writeErr := w.Write(responseData)
+
+	if err == nil && r.storage != nil {
+		if deleteErr := r.storage.Delete(context.Background(), key); deleteErr != nil {
+			r.logger.Error("Failed to delete processed OTLP entry", zap.Error(deleteErr))
+		} else {
+			r.removeFromKeysList(key)
+		}
+	}
+
+	r.obsrecv.EndLogsOp(ctx, "protobuf", numRecords, err)
+
+	return writeErr
 }
