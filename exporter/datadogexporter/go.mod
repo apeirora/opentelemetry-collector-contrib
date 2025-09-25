@@ -3,7 +3,7 @@ module github.com/open-telemetry/opentelemetry-collector-contrib/exporter/datado
 go 1.24.0
 
 require (
-	github.com/DataDog/agent-payload/v5 v5.0.164
+	github.com/DataDog/agent-payload/v5 v5.0.165
 	github.com/DataDog/datadog-agent/comp/core/hostname/hostnameinterface v0.71.0-devel.0.20250902202452-61c2536752eb
 	github.com/DataDog/datadog-agent/comp/logs/agent/config v0.71.0-devel.0.20250902202452-61c2536752eb
 	github.com/DataDog/datadog-agent/comp/otelcol/logsagentpipeline v0.71.0-devel.0.20250902202452-61c2536752eb
@@ -197,6 +197,7 @@ require (
 	github.com/coreos/go-systemd/v22 v22.5.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dennwc/varint v1.0.0 // indirect
+	github.com/digitalocean/go-metadata v0.0.0-20250129100319-e3650a3df44b // indirect
 	github.com/digitalocean/godo v1.157.0 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/docker v28.4.0+incompatible // indirect
