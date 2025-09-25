@@ -133,10 +133,10 @@ func main() {
 	// Create consumer
 	consumer := &testConsumer{logger: logger}
 
-	// Create receiver settings
+	// Create receiver settings with proper telemetry
 	settings := receiver.Settings{
 		ID:                component.NewID(factory.Type()),
-		TelemetrySettings: component.TelemetrySettings{Logger: logger},
+		TelemetrySettings: componenttest.NewNopTelemetrySettings(),
 	}
 
 	// Create the receiver directly using the internal function
