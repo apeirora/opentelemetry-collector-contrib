@@ -35,9 +35,10 @@ const (
 )
 
 type AuditLogEntry struct {
-	ID        string    `json:"id"`
-	Timestamp time.Time `json:"timestamp"`
-	Body      []byte    `json:"body"`
+	ID          string    `json:"id"`
+	Timestamp   time.Time `json:"timestamp"`
+	Body        []byte    `json:"body"`
+	ContentType string    `json:"content_type"`
 }
 
 type auditLogReceiver struct {
@@ -142,20 +143,13 @@ func (r *auditLogReceiver) processAuditLog(entry *AuditLogEntry) error {
 
 	r.logger.Info("Processing audit log",
 		zap.String("id", entry.ID),
-		zap.Time("timestamp", entry.Timestamp))
+		zap.Time("timestamp", entry.Timestamp),
+		zap.String("content_type", entry.ContentType))
 
-	logs := plog.NewLogs()
-	resourceLogs := logs.ResourceLogs().AppendEmpty()
-	scopeLogs := resourceLogs.ScopeLogs().AppendEmpty()
-	logRecord := scopeLogs.LogRecords().AppendEmpty()
-
-	logRecord.SetSeverityNumber(plog.SeverityNumberInfo)
-	logRecord.SetSeverityText("INFO")
-
-	logRecord.Body().SetStr(string(entry.Body))
-
-	attrs := logRecord.Attributes()
-	attrs.PutStr("receiver", "auditlogreceiver")
+	logs, err := r.unmarshalLogs(entry.Body, entry.ContentType)
+	if err != nil {
+		return err
+	}
 
 	ctx := context.Background()
 
@@ -167,6 +161,40 @@ func (r *auditLogReceiver) processAuditLog(entry *AuditLogEntry) error {
 
 	r.circuitBreaker.RecordSuccess()
 	return nil
+}
+
+func (r *auditLogReceiver) unmarshalLogs(body []byte, contentType string) (plog.Logs, error) {
+	if contentType == "application/x-protobuf" || contentType == "application/vnd.google.protobuf" {
+		otlpReq := plogotlp.NewExportRequest()
+		if err := otlpReq.UnmarshalProto(body); err != nil {
+			r.logger.Error("Failed to unmarshal OTLP protobuf", zap.Error(err))
+			return plog.NewLogs(), err
+		}
+		return otlpReq.Logs(), nil
+	}
+
+	if contentType == "application/json" {
+		otlpReq := plogotlp.NewExportRequest()
+		if err := otlpReq.UnmarshalJSON(body); err != nil {
+			r.logger.Error("Failed to unmarshal OTLP JSON", zap.Error(err))
+			return plog.NewLogs(), err
+		}
+		return otlpReq.Logs(), nil
+	}
+
+	logs := plog.NewLogs()
+	resourceLogs := logs.ResourceLogs().AppendEmpty()
+	scopeLogs := resourceLogs.ScopeLogs().AppendEmpty()
+	logRecord := scopeLogs.LogRecords().AppendEmpty()
+
+	logRecord.SetSeverityNumber(plog.SeverityNumberInfo)
+	logRecord.SetSeverityText("INFO")
+	logRecord.Body().SetStr(string(body))
+
+	attrs := logRecord.Attributes()
+	attrs.PutStr("receiver", "auditlogreceiver")
+
+	return logs, nil
 }
 
 func (r *auditLogReceiver) processStoredLogsLoop() {
@@ -230,13 +258,6 @@ func (r *auditLogReceiver) processStoredLogs() {
 		}
 
 		if entry.Timestamp.After(cutoffTime) {
-			continue
-		}
-
-		// Check circuit breaker state
-		shouldProcess, err := r.circuitBreaker.CheckCircuitBreakerState(key)
-		if !shouldProcess {
-			r.logger.Debug("Circuit breaker is open, skipping processing", zap.String("key", key))
 			continue
 		}
 
@@ -369,12 +390,22 @@ func (r *auditLogReceiver) handleAuditLogs(w http.ResponseWriter, req *http.Requ
 		return
 	}
 
+	if contentType == "application/json" {
+		err = r.handleOTLPJSON(w, req, body, entryID, key)
+		if err != nil {
+			r.logger.Error("Failed to handle OTLP JSON request", zap.Error(err))
+			return
+		}
+		return
+	}
+
 	ctx := r.obsrecv.StartLogsOp(req.Context())
 
 	entry := AuditLogEntry{
-		ID:        entryID,
-		Timestamp: time.Now(),
-		Body:      body,
+		ID:          entryID,
+		Timestamp:   time.Now(),
+		Body:        body,
+		ContentType: contentType,
 	}
 
 	entryData, err := json.Marshal(entry)
@@ -421,57 +452,61 @@ func (r *auditLogReceiver) handleAuditLogs(w http.ResponseWriter, req *http.Requ
 	}
 }
 
-// handleOTLPProtobuf handles OTLP protobuf format requests following standard OTLP patterns
-func (r *auditLogReceiver) handleOTLPProtobuf(w http.ResponseWriter, req *http.Request, body []byte, entryID, key string) error {
+type otlpFormat struct {
+	contentType    string
+	transportName  string
+	unmarshalFunc  func([]byte) (plog.Logs, int, []byte, error)
+	marshalFunc    func() ([]byte, error)
+	responseFormat string
+}
+
+func (r *auditLogReceiver) handleOTLP(w http.ResponseWriter, req *http.Request, body []byte, entryID, key string, format otlpFormat) error {
 	ctx := r.obsrecv.StartLogsOp(req.Context())
 
-	otlpReq := plogotlp.NewExportRequest()
-	if err := otlpReq.UnmarshalProto(body); err != nil {
-		r.logger.Error("Failed to unmarshal OTLP protobuf request", zap.Error(err))
+	_, numRecords, bodyToStore, err := format.unmarshalFunc(body)
+	if err != nil {
+		r.logger.Error("Failed to unmarshal OTLP request", zap.Error(err), zap.String("format", format.transportName))
 		errorutil.HTTPError(w, consumererror.NewPermanent(err))
-		r.obsrecv.EndLogsOp(ctx, "protobuf", 0, err)
+		r.obsrecv.EndLogsOp(ctx, format.transportName, 0, err)
 		return err
 	}
 
-	logs := otlpReq.Logs()
-	numRecords := logs.LogRecordCount()
-
 	if numRecords == 0 {
-		response := plogotlp.NewExportResponse()
-		responseData, err := response.MarshalProto()
+		responseData, err := format.marshalFunc()
 		if err != nil {
 			r.logger.Error("Failed to marshal OTLP response", zap.Error(err))
 			errorutil.HTTPError(w, err)
-			r.obsrecv.EndLogsOp(ctx, "protobuf", 0, err)
+			r.obsrecv.EndLogsOp(ctx, format.transportName, 0, err)
 			return err
 		}
 
-		w.Header().Set("Content-Type", "application/x-protobuf")
+		w.Header().Set("Content-Type", format.responseFormat)
 		w.WriteHeader(http.StatusOK)
 		_, err = w.Write(responseData)
-		r.obsrecv.EndLogsOp(ctx, "protobuf", 0, err)
+		r.obsrecv.EndLogsOp(ctx, format.transportName, 0, err)
 		return err
 	}
 
-	if r.storage != nil {
-		entry := AuditLogEntry{
-			ID:        entryID,
-			Timestamp: time.Now(),
-			Body:      body,
-		}
+	entry := AuditLogEntry{
+		ID:          entryID,
+		Timestamp:   time.Now(),
+		Body:        bodyToStore,
+		ContentType: format.contentType,
+	}
 
+	if r.storage != nil {
 		entryData, err := json.Marshal(entry)
 		if err != nil {
 			r.logger.Error("Failed to marshal audit log entry", zap.Error(err))
 			errorutil.HTTPError(w, err)
-			r.obsrecv.EndLogsOp(ctx, "protobuf", numRecords, err)
+			r.obsrecv.EndLogsOp(ctx, format.transportName, numRecords, err)
 			return err
 		}
 
 		if err := r.storage.Set(context.Background(), key, entryData); err != nil {
 			r.logger.Error("Failed to store audit log entry", zap.String("key", key), zap.Error(err))
 			errorutil.HTTPError(w, err)
-			r.obsrecv.EndLogsOp(ctx, "protobuf", numRecords, err)
+			r.obsrecv.EndLogsOp(ctx, format.transportName, numRecords, err)
 			return err
 		}
 
@@ -482,26 +517,21 @@ func (r *auditLogReceiver) handleOTLPProtobuf(w http.ResponseWriter, req *http.R
 		r.logger.Info("Stored OTLP audit log entry", zap.String("id", entryID), zap.Int("log_records", numRecords))
 	}
 
-	err := r.consumer.ConsumeLogs(ctx, logs)
+	processErr := r.processAuditLog(&entry)
 
-	response := plogotlp.NewExportResponse()
-	if err != nil {
-		r.logger.Error("Failed to consume OTLP logs", zap.Error(err))
-	}
-
-	responseData, marshalErr := response.MarshalProto()
+	responseData, marshalErr := format.marshalFunc()
 	if marshalErr != nil {
 		r.logger.Error("Failed to marshal OTLP response", zap.Error(marshalErr))
 		errorutil.HTTPError(w, marshalErr)
-		r.obsrecv.EndLogsOp(ctx, "protobuf", numRecords, marshalErr)
+		r.obsrecv.EndLogsOp(ctx, format.transportName, numRecords, marshalErr)
 		return marshalErr
 	}
 
-	w.Header().Set("Content-Type", "application/x-protobuf")
+	w.Header().Set("Content-Type", format.responseFormat)
 	w.WriteHeader(http.StatusOK)
 	_, writeErr := w.Write(responseData)
 
-	if err == nil && r.storage != nil {
+	if processErr == nil && r.storage != nil {
 		if deleteErr := r.storage.Delete(context.Background(), key); deleteErr != nil {
 			r.logger.Error("Failed to delete processed OTLP entry", zap.Error(deleteErr))
 		} else {
@@ -509,7 +539,54 @@ func (r *auditLogReceiver) handleOTLPProtobuf(w http.ResponseWriter, req *http.R
 		}
 	}
 
-	r.obsrecv.EndLogsOp(ctx, "protobuf", numRecords, err)
+	r.obsrecv.EndLogsOp(ctx, format.transportName, numRecords, processErr)
 
 	return writeErr
+}
+
+func (r *auditLogReceiver) handleOTLPProtobuf(w http.ResponseWriter, req *http.Request, body []byte, entryID, key string) error {
+	format := otlpFormat{
+		contentType:    "application/x-protobuf",
+		transportName:  "protobuf",
+		responseFormat: "application/x-protobuf",
+		unmarshalFunc: func(data []byte) (plog.Logs, int, []byte, error) {
+			otlpReq := plogotlp.NewExportRequest()
+			if err := otlpReq.UnmarshalProto(data); err != nil {
+				return plog.NewLogs(), 0, nil, err
+			}
+			logs := otlpReq.Logs()
+			return logs, logs.LogRecordCount(), data, nil
+		},
+		marshalFunc: func() ([]byte, error) {
+			response := plogotlp.NewExportResponse()
+			return response.MarshalProto()
+		},
+	}
+	return r.handleOTLP(w, req, body, entryID, key, format)
+}
+
+func (r *auditLogReceiver) handleOTLPJSON(w http.ResponseWriter, req *http.Request, body []byte, entryID, key string) error {
+	format := otlpFormat{
+		contentType:    "application/x-protobuf",
+		transportName:  "json",
+		responseFormat: "application/json",
+		unmarshalFunc: func(data []byte) (plog.Logs, int, []byte, error) {
+			otlpReq := plogotlp.NewExportRequest()
+			if err := otlpReq.UnmarshalJSON(data); err != nil {
+				return plog.NewLogs(), 0, nil, err
+			}
+			logs := otlpReq.Logs()
+			bodyToStore, err := otlpReq.MarshalProto()
+			if err != nil {
+				r.logger.Error("Failed to marshal OTLP to protobuf for storage", zap.Error(err))
+				bodyToStore = data
+			}
+			return logs, logs.LogRecordCount(), bodyToStore, nil
+		},
+		marshalFunc: func() ([]byte, error) {
+			response := plogotlp.NewExportResponse()
+			return response.MarshalJSON()
+		},
+	}
+	return r.handleOTLP(w, req, body, entryID, key, format)
 }

@@ -1,6 +1,6 @@
 receivers:
   auditlogreceiver:
-    endpoint: 0.0.0.0:8080
+    endpoint: 0.0.0.0:4318
     storage: file_storage
     process_interval: 30s
     process_age_threshold: 60s
@@ -11,7 +11,8 @@ receivers:
 exporters:
   debug:
     verbosity: detailed
-
+    sampling_initial: 1000
+    sampling_thereafter: 1000
 extensions:
   file_storage:
     directory: /var/lib/otelcol/storage
