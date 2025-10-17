@@ -370,6 +370,42 @@ func (r *auditLogReceiver) removeFromKeysList(key string) {
 	}
 }
 
+func (r *auditLogReceiver) storeLogAndUpdateKeysList(key string, logData []byte) error {
+	r.keysListMutex.Lock()
+	defer r.keysListMutex.Unlock()
+
+	keys, err := r.getAllKeys()
+	if err != nil {
+		return fmt.Errorf("failed to get keys list: %w", err)
+	}
+
+	keyExists := false
+	for _, k := range keys {
+		if k == key {
+			keyExists = true
+			break
+		}
+	}
+
+	var ops []*storage.Operation
+	ops = append(ops, storage.SetOperation(key, logData))
+
+	if !keyExists {
+		keys = append(keys, key)
+		keysListData, err := json.Marshal(keys)
+		if err != nil {
+			return fmt.Errorf("failed to marshal keys list: %w", err)
+		}
+		ops = append(ops, storage.SetOperation(keysListKey, keysListData))
+	}
+
+	if err := r.storage.Batch(context.Background(), ops...); err != nil {
+		return fmt.Errorf("failed to batch store log and update keys list: %w", err)
+	}
+
+	return nil
+}
+
 func (r *auditLogReceiver) deleteLogAndUpdateKeysList(key string) error {
 	r.keysListMutex.Lock()
 	defer r.keysListMutex.Unlock()
@@ -464,15 +500,11 @@ func (r *auditLogReceiver) handleAuditLogs(w http.ResponseWriter, req *http.Requ
 	}
 
 	if r.storage != nil {
-		if err := r.storage.Set(context.Background(), key, entryData); err != nil {
+		if err := r.storeLogAndUpdateKeysList(key, entryData); err != nil {
 			r.logger.Error("Failed to store audit log entry", zap.String("key", key), zap.Error(err))
 			errorutil.HTTPError(w, err)
 			r.obsrecv.EndLogsOp(ctx, "json", 0, err)
 			return
-		}
-
-		if err := r.addToKeysList(key); err != nil {
-			r.logger.Error("Failed to add key to keys list", zap.String("key", key), zap.Error(err))
 		}
 
 		r.logger.Info("Stored audit log entry", zap.String("id", entryID), zap.String("content_type", contentType))
@@ -545,15 +577,11 @@ func (r *auditLogReceiver) handleOTLPProtobuf(w http.ResponseWriter, req *http.R
 			return err
 		}
 
-		if err := r.storage.Set(context.Background(), key, entryData); err != nil {
+		if err := r.storeLogAndUpdateKeysList(key, entryData); err != nil {
 			r.logger.Error("Failed to store audit log entry", zap.String("key", key), zap.Error(err))
 			errorutil.HTTPError(w, err)
 			r.obsrecv.EndLogsOp(ctx, "protobuf", numRecords, err)
 			return err
-		}
-
-		if err := r.addToKeysList(key); err != nil {
-			r.logger.Error("Failed to add key to keys list", zap.String("key", key), zap.Error(err))
 		}
 
 		r.logger.Info("Stored OTLP audit log entry", zap.String("id", entryID), zap.Int("log_records", numRecords))
@@ -645,15 +673,11 @@ func (r *auditLogReceiver) handleOTLPJSON(w http.ResponseWriter, req *http.Reque
 			return err
 		}
 
-		if err := r.storage.Set(context.Background(), key, entryData); err != nil {
+		if err := r.storeLogAndUpdateKeysList(key, entryData); err != nil {
 			r.logger.Error("Failed to store audit log entry", zap.String("key", key), zap.Error(err))
 			errorutil.HTTPError(w, err)
 			r.obsrecv.EndLogsOp(ctx, "json", numRecords, err)
 			return err
-		}
-
-		if err := r.addToKeysList(key); err != nil {
-			r.logger.Error("Failed to add key to keys list", zap.String("key", key), zap.Error(err))
 		}
 
 		r.logger.Info("Stored OTLP audit log entry (from JSON)", zap.String("id", entryID), zap.Int("log_records", numRecords))
