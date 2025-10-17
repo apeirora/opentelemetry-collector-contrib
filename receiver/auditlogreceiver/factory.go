@@ -21,6 +21,9 @@ func NewFactory() receiver.Factory {
 func createDefaultConfig() component.Config {
 	return &Config{
 		ServerConfig: confighttp.NewDefaultServerConfig(),
+		CircuitBreaker: CircuitBreakerConfig{
+			Enabled: true,
+		},
 	}
 }
 

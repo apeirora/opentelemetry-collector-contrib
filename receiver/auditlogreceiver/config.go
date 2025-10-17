@@ -27,6 +27,10 @@ type Config struct {
 
 // CircuitBreakerConfig defines circuit breaker behavior
 type CircuitBreakerConfig struct {
+	// Enabled specifies whether the circuit breaker is enabled
+	// Default: true
+	Enabled bool `mapstructure:"enabled"`
+
 	// CircuitOpenThreshold specifies the number of consecutive failures before circuit opens
 	// Default: 5
 	CircuitOpenThreshold int `mapstructure:"circuit_open_threshold"`
