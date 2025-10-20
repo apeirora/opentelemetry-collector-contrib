@@ -34,7 +34,9 @@ ignored_paths:
   - processor/tailsamplingprocessor
   - receiver/hostmetricsreceiver # issue with the parser not identifying Config as a config struct
   - receiver/pulsarreceiver # 38930
+  - receiver/auditlogreceiver/test-standalone # test module
   - exporter/pulsarexporter # 38929
+  - test-auditlog # test module
   - exporter/elasticsearchexporter/integrationtest
   - testbed/mockdatasenders/mockdatadogagentexporter
   - extension/sumologicextension # 40655

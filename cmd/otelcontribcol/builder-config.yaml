@@ -151,6 +151,7 @@ receivers:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/aerospikereceiver v0.137.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/apachereceiver v0.137.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/apachesparkreceiver v0.137.0
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/auditlogreceiver v0.137.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/awscloudwatchreceiver v0.137.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/awscontainerinsightreceiver v0.137.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/awsecscontainermetricsreceiver v0.137.0
