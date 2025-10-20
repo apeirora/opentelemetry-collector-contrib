@@ -5,28 +5,28 @@ package main
 
 import (
 	"context"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/auditlogreceiver"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/receiver"
 	"go.uber.org/zap"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/auditlogreceiver"
 )
 
 type testConsumer struct {
 	logger *zap.Logger
 }
 
-func (tc *testConsumer) Capabilities() consumer.Capabilities {
+func (*testConsumer) Capabilities() consumer.Capabilities {
 	return consumer.Capabilities{MutatesData: false}
 }
 
-func (tc *testConsumer) ConsumeLogs(ctx context.Context, logs plog.Logs) error {
+func (tc *testConsumer) ConsumeLogs(_ context.Context, logs plog.Logs) error {
 	tc.logger.Info("Received logs", zap.Int("count", logs.LogRecordCount()))
 	for i := 0; i < logs.ResourceLogs().Len(); i++ {
 		for j := 0; j < logs.ResourceLogs().At(i).ScopeLogs().Len(); j++ {
@@ -43,7 +43,9 @@ func (tc *testConsumer) ConsumeLogs(ctx context.Context, logs plog.Logs) error {
 
 func main() {
 	logger, _ := zap.NewDevelopment()
-	defer logger.Sync()
+	defer func() {
+		_ = logger.Sync()
+	}()
 
 	// Create the receiver factory
 	factory := auditlogreceiver.NewFactory()
@@ -61,10 +63,11 @@ func main() {
 		TelemetrySettings: component.TelemetrySettings{Logger: logger},
 	}
 
-	// Create the receiver directly using the internal function
 	recv, err := auditlogreceiver.NewReceiver(cfg, settings, consumer)
 	if err != nil {
-		log.Fatalf("Failed to create receiver: %v", err)
+		logger.Error("Failed to create receiver", zap.Error(err))
+		_ = logger.Sync()
+		os.Exit(1)
 	}
 
 	// Start the receiver
@@ -73,7 +76,9 @@ func main() {
 
 	err = recv.Start(ctx, nil)
 	if err != nil {
-		log.Fatalf("Failed to start receiver: %v", err)
+		logger.Error("Failed to start receiver", zap.Error(err))
+		_ = logger.Sync()
+		os.Exit(1)
 	}
 
 	logger.Info("Audit log receiver started successfully")
@@ -86,9 +91,10 @@ func main() {
 
 	logger.Info("Shutting down...")
 
-	// Shutdown the receiver
 	err = recv.Shutdown(ctx)
 	if err != nil {
-		log.Fatalf("Failed to shutdown receiver: %v", err)
+		logger.Error("Failed to shutdown receiver", zap.Error(err))
+		_ = logger.Sync()
+		os.Exit(1)
 	}
 }

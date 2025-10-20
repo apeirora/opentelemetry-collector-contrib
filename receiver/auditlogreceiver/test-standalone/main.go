@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log"
@@ -12,8 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/extension/storage/filestorage"
-	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/auditlogreceiver"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/consumer"
@@ -22,6 +21,9 @@ import (
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/receiver"
 	"go.uber.org/zap"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/extension/storage/filestorage"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/auditlogreceiver"
 )
 
 var errCounter = 0
@@ -30,11 +32,11 @@ type testConsumer struct {
 	logger *zap.Logger
 }
 
-func (tc *testConsumer) Capabilities() consumer.Capabilities {
+func (*testConsumer) Capabilities() consumer.Capabilities {
 	return consumer.Capabilities{MutatesData: false}
 }
 
-func (tc *testConsumer) ConsumeLogs(ctx context.Context, logs plog.Logs) error {
+func (tc *testConsumer) ConsumeLogs(_ context.Context, logs plog.Logs) error {
 	tc.logger.Info("ErrCounter:%v", zap.Int("errCounter", errCounter))
 	if errCounter < 10 {
 		errCounter++
@@ -56,7 +58,9 @@ func (tc *testConsumer) ConsumeLogs(ctx context.Context, logs plog.Logs) error {
 
 func main() {
 	logger, _ := zap.NewDevelopment()
-	defer logger.Sync()
+	defer func() {
+		_ = logger.Sync()
+	}()
 
 	// Clean up any existing storage directory to avoid corruption issues
 	storageDir := "./auditlog_storage"
@@ -73,17 +77,18 @@ func main() {
 	storageCfg.Directory = storageDir
 	storageCfg.CreateDirectory = true
 
-	storageExt, err := storageFactory.Create(context.Background(), extension.Settings{
+	ctx := context.Background()
+	storageExt, err := storageFactory.Create(ctx, extension.Settings{
 		ID:                component.NewID(component.MustNewType("file_storage")),
 		TelemetrySettings: component.TelemetrySettings{Logger: logger},
 	}, storageCfg)
 	if err != nil {
+		_ = logger.Sync()
 		log.Fatalf("Failed to create storage extension: %v", err)
 	}
 
-	// Start storage extension
-	if err := storageExt.Start(context.Background(), nil); err != nil {
-		log.Fatalf("Failed to start storage extension: %v", err)
+	if startErr := storageExt.Start(context.Background(), nil); startErr != nil {
+		log.Fatalf("Failed to start storage extension: %v", startErr)
 	}
 
 	// Test file storage connection with timeout
@@ -102,25 +107,23 @@ func main() {
 		log.Fatalf("Failed to get file storage test client: %v", err)
 	}
 
-	// Test basic file storage operations
 	testKey := "connection_test"
 	testValue := []byte("test_value")
-	if err := testClient.Set(storageCtx, testKey, testValue); err != nil {
-		log.Fatalf("Failed to set test value in file storage: %v", err)
+	if setErr := testClient.Set(storageCtx, testKey, testValue); setErr != nil {
+		log.Fatalf("Failed to set test value in file storage: %v", setErr)
 	}
 
-	retrievedValue, err := testClient.Get(storageCtx, testKey)
-	if err != nil {
-		log.Fatalf("Failed to get test value from file storage: %v", err)
+	retrievedValue, getErr := testClient.Get(storageCtx, testKey)
+	if getErr != nil {
+		log.Fatalf("Failed to get test value from file storage: %v", getErr)
 	}
 
-	if string(retrievedValue) != string(testValue) {
+	if !bytes.Equal(retrievedValue, testValue) {
 		log.Fatalf("File storage test failed: expected %s, got %s", string(testValue), string(retrievedValue))
 	}
 
-	// Clean up test data
-	if err := testClient.Delete(storageCtx, testKey); err != nil {
-		logger.Warn("Failed to clean up test data", zap.Error(err))
+	if deleteErr := testClient.Delete(storageCtx, testKey); deleteErr != nil {
+		logger.Warn("Failed to clean up test data", zap.Error(deleteErr))
 	}
 
 	logger.Info("File storage connection test successful!")

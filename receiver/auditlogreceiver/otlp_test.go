@@ -23,12 +23,12 @@ type mockConsumer struct {
 	logs []plog.Logs
 }
 
-func (m *mockConsumer) ConsumeLogs(ctx context.Context, logs plog.Logs) error {
+func (m *mockConsumer) ConsumeLogs(_ context.Context, logs plog.Logs) error {
 	m.logs = append(m.logs, logs)
 	return nil
 }
 
-func (m *mockConsumer) Capabilities() consumer.Capabilities {
+func (*mockConsumer) Capabilities() consumer.Capabilities {
 	return consumer.Capabilities{}
 }
 
@@ -64,33 +64,26 @@ func TestHandleOTLPProtobuf(t *testing.T) {
 		t.Fatalf("Failed to marshal OTLP request: %v", err)
 	}
 
-	// Create HTTP request
-	req := httptest.NewRequest("POST", "/v1/logs", bytes.NewReader(requestData))
+	req := httptest.NewRequest(http.MethodPost, "/v1/logs", bytes.NewReader(requestData))
 	req.Header.Set("Content-Type", "application/x-protobuf")
 
-	// Create response recorder
 	w := httptest.NewRecorder()
 
-	// Handle the request
 	r.handleAuditLogs(w, req)
 
-	// Check response
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status 200, got %d", w.Code)
 	}
 
-	// Check content type
 	contentType := w.Header().Get("Content-Type")
 	if contentType != "application/x-protobuf" {
 		t.Errorf("Expected content type 'application/x-protobuf', got '%s'", contentType)
 	}
 
-	// Check that logs were consumed
 	if len(mockConsumer.logs) == 0 {
 		t.Error("Expected logs to be consumed")
 	}
 
-	// Verify the response is valid OTLP protobuf
 	responseData := w.Body.Bytes()
 	otlpResp := plogotlp.NewExportResponse()
 	if err := otlpResp.UnmarshalProto(responseData); err != nil {
@@ -122,28 +115,22 @@ func TestHandleOTLPProtobufEmptyLogs(t *testing.T) {
 		t.Fatalf("Failed to marshal OTLP request: %v", err)
 	}
 
-	// Create HTTP request
-	req := httptest.NewRequest("POST", "/v1/logs", bytes.NewReader(requestData))
+	req := httptest.NewRequest(http.MethodPost, "/v1/logs", bytes.NewReader(requestData))
 	req.Header.Set("Content-Type", "application/x-protobuf")
 
-	// Create response recorder
 	w := httptest.NewRecorder()
 
-	// Handle the request
 	r.handleAuditLogs(w, req)
 
-	// Check response
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status 200, got %d", w.Code)
 	}
 
-	// Check content type
 	contentType := w.Header().Get("Content-Type")
 	if contentType != "application/x-protobuf" {
 		t.Errorf("Expected content type 'application/x-protobuf', got '%s'", contentType)
 	}
 
-	// Verify the response is valid OTLP protobuf
 	responseData := w.Body.Bytes()
 	otlpResp := plogotlp.NewExportResponse()
 	if err := otlpResp.UnmarshalProto(responseData); err != nil {
@@ -152,23 +139,19 @@ func TestHandleOTLPProtobufEmptyLogs(t *testing.T) {
 }
 
 func TestHandleOTLPProtobufInvalidData(t *testing.T) {
-	// Create a mock consumer
 	mockConsumer := &mockConsumer{}
 
-	// Create receiver config
 	cfg := &Config{
 		ServerConfig: confighttp.NewDefaultServerConfig(),
 	}
 
-	// Create receiver
 	settings := receivertest.NewNopSettings(metadata.Type)
 	r, err := NewReceiver(cfg, settings, mockConsumer)
 	if err != nil {
 		t.Fatalf("Failed to create receiver: %v", err)
 	}
 
-	// Create HTTP request with invalid protobuf data
-	req := httptest.NewRequest("POST", "/v1/logs", bytes.NewReader([]byte("invalid protobuf data")))
+	req := httptest.NewRequest(http.MethodPost, "/v1/logs", bytes.NewReader([]byte("invalid protobuf data")))
 	req.Header.Set("Content-Type", "application/x-protobuf")
 
 	// Create response recorder

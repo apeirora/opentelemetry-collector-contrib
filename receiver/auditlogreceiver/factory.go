@@ -6,11 +6,12 @@ package auditlogreceiver
 import (
 	"context"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/auditlogreceiver/internal/metadata"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config/confighttp"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/receiver"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/auditlogreceiver/internal/metadata"
 )
 
 func NewFactory() receiver.Factory {
@@ -30,10 +31,10 @@ func createDefaultConfig() component.Config {
 	}
 }
 
-//type CreateLogsFunc func(context.Context, Settings, component.Config, consumer.Logs) (Logs, error)
+// type CreateLogsFunc func(context.Context, Settings, component.Config, consumer.Logs) (Logs, error)
 
 func createLogsReceiver(
-	ctx context.Context,
+	_ context.Context,
 	set receiver.Settings,
 	cfg component.Config,
 	consumer consumer.Logs,

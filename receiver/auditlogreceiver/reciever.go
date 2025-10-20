@@ -6,6 +6,7 @@ package auditlogreceiver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,7 +14,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal/errorutil"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/consumer/consumererror"
@@ -23,12 +23,14 @@ import (
 	"go.opentelemetry.io/collector/receiver"
 	"go.opentelemetry.io/collector/receiver/receiverhelper"
 	"go.uber.org/zap"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal/errorutil"
 )
 
 // TODO
-//Fix loging of processed log(count only vaild one)
+// Fix loging of processed log(count only vaild one)
 
-// what will happen if we implement persistance que in exporter?
+// what will happen if we implement persistence que in exporter?
 // entry point, should it be same as for logs, should we check for audit logs?
 // filtering for attribute or sth else
 const (
@@ -37,7 +39,7 @@ const (
 	defaultProcessInterval = 30 * time.Second
 )
 
-type AuditLogEntry struct {
+type auditLogEntry struct {
 	ID          string    `json:"id"`
 	Timestamp   time.Time `json:"timestamp"`
 	Body        []byte    `json:"body"`
@@ -54,13 +56,15 @@ type auditLogReceiver struct {
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
 
-	circuitBreaker *CircuitBreaker
+	circuitBreaker *circuitBreaker
 	obsrecv        *receiverhelper.ObsReport
 
 	keysListMutex sync.Mutex
 }
 
-func NewReceiver(cfg *Config, set receiver.Settings, consumer consumer.Logs) (*auditLogReceiver, error) {
+type AuditLogReceiver = auditLogReceiver
+
+func NewReceiver(cfg *Config, set receiver.Settings, consumer consumer.Logs) (*AuditLogReceiver, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	obsrecv, err := receiverhelper.NewObsReport(receiverhelper.ObsReportSettings{
@@ -69,6 +73,7 @@ func NewReceiver(cfg *Config, set receiver.Settings, consumer consumer.Logs) (*a
 		ReceiverCreateSettings: set,
 	})
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 
@@ -81,16 +86,17 @@ func NewReceiver(cfg *Config, set receiver.Settings, consumer consumer.Logs) (*a
 		obsrecv:  obsrecv,
 	}
 
-	r.circuitBreaker = NewCircuitBreaker(cfg.CircuitBreaker, set.Logger)
+	r.circuitBreaker = newCircuitBreaker(cfg.CircuitBreaker, set.Logger)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/logs", r.handleAuditLogs)
-	mux.HandleFunc("/v1/logs/", r.handleAuditLogs)       // Support OTLP standard endpoint
-	mux.HandleFunc("/v1/logs/export", r.handleAuditLogs) // OTLP standard export endpoint
+	mux.HandleFunc("/v1/logs/", r.handleAuditLogs)
+	mux.HandleFunc("/v1/logs/export", r.handleAuditLogs)
 
 	r.server = &http.Server{
-		Addr:    cfg.Endpoint,
-		Handler: mux,
+		Addr:              cfg.Endpoint,
+		Handler:           mux,
+		ReadHeaderTimeout: 20 * time.Second,
 	}
 
 	return r, nil
@@ -140,9 +146,9 @@ func (r *auditLogReceiver) Shutdown(ctx context.Context) error {
 	return r.server.Shutdown(ctx)
 }
 
-func (r *auditLogReceiver) processAuditLog(entry *AuditLogEntry) error {
+func (r *auditLogReceiver) processAuditLog(entry *auditLogEntry) error {
 	if r.cfg.CircuitBreaker.Enabled {
-		shouldProcess, err := r.circuitBreaker.CheckCircuitBreakerState(entry.ID)
+		shouldProcess, err := r.circuitBreaker.checkCircuitBreakerState(entry.ID)
 		if !shouldProcess {
 			return err
 		}
@@ -155,21 +161,22 @@ func (r *auditLogReceiver) processAuditLog(entry *AuditLogEntry) error {
 
 	var logs plog.Logs
 
-	if entry.ContentType == "application/x-protobuf" || entry.ContentType == "application/vnd.google.protobuf" {
+	switch entry.ContentType {
+	case "application/x-protobuf", "application/vnd.google.protobuf":
 		otlpReq := plogotlp.NewExportRequest()
 		if err := otlpReq.UnmarshalProto(entry.Body); err != nil {
 			r.logger.Error("Failed to unmarshal OTLP protobuf from storage", zap.Error(err))
 			return err
 		}
 		logs = otlpReq.Logs()
-	} else if entry.ContentType == "application/json" {
+	case "application/json":
 		otlpReq := plogotlp.NewExportRequest()
 		if err := otlpReq.UnmarshalJSON(entry.Body); err != nil {
 			r.logger.Error("Failed to unmarshal OTLP JSON from storage", zap.Error(err))
 			return err
 		}
 		logs = otlpReq.Logs()
-	} else {
+	default:
 		logs = plog.NewLogs()
 		resourceLogs := logs.ResourceLogs().AppendEmpty()
 		scopeLogs := resourceLogs.ScopeLogs().AppendEmpty()
@@ -255,7 +262,7 @@ func (r *auditLogReceiver) processStoredLogs() {
 			continue
 		}
 
-		var entry AuditLogEntry
+		var entry auditLogEntry
 		if err := json.Unmarshal(data, &entry); err != nil {
 			r.logger.Error("Failed to unmarshal audit log entry", zap.String("key", key), zap.Error(err))
 			continue
@@ -266,7 +273,7 @@ func (r *auditLogReceiver) processStoredLogs() {
 		}
 
 		if r.cfg.CircuitBreaker.Enabled {
-			shouldProcess, _ := r.circuitBreaker.CheckCircuitBreakerState(key)
+			shouldProcess, _ := r.circuitBreaker.checkCircuitBreakerState(key)
 			if !shouldProcess {
 				r.logger.Debug("Circuit breaker is open, skipping processing", zap.String("key", key))
 				continue
@@ -288,11 +295,7 @@ func (r *auditLogReceiver) processStoredLogs() {
 	}
 }
 
-// getAllKeys retrieves all keys from storage
-// Since storage interface doesn't provide a direct way to list all keys through the storage interface,
-// we'll use a simple approach: maintain a list of keys in storage.
 func (r *auditLogReceiver) getAllKeys() ([]string, error) {
-
 	data, err := r.storage.Get(context.Background(), keysListKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get keys list: %w", err)
@@ -308,35 +311,6 @@ func (r *auditLogReceiver) getAllKeys() ([]string, error) {
 	}
 
 	return keys, nil
-}
-
-func (r *auditLogReceiver) addToKeysList(key string) error {
-	r.keysListMutex.Lock()
-	defer r.keysListMutex.Unlock()
-
-	keys, err := r.getAllKeys()
-	if err != nil {
-		return fmt.Errorf("failed to get keys list: %w", err)
-	}
-
-	for _, k := range keys {
-		if k == key {
-			return nil
-		}
-	}
-
-	keys = append(keys, key)
-
-	data, err := json.Marshal(keys)
-	if err != nil {
-		return fmt.Errorf("failed to marshal keys list: %w", err)
-	}
-
-	if err := r.storage.Set(context.Background(), keysListKey, data); err != nil {
-		return fmt.Errorf("failed to update keys list: %w", err)
-	}
-
-	return nil
 }
 
 func (r *auditLogReceiver) removeFromKeysList(key string) {
@@ -447,7 +421,7 @@ func (r *auditLogReceiver) deleteLogAndUpdateKeysList(key string) error {
 
 func (r *auditLogReceiver) handleAuditLogs(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
-		errorutil.HTTPError(w, consumererror.NewPermanent(fmt.Errorf("only POST method allowed")))
+		errorutil.HTTPError(w, consumererror.NewPermanent(errors.New("only POST method allowed")))
 		return
 	}
 
@@ -487,7 +461,7 @@ func (r *auditLogReceiver) handleAuditLogs(w http.ResponseWriter, req *http.Requ
 
 	ctx := r.obsrecv.StartLogsOp(req.Context())
 
-	entry := AuditLogEntry{
+	entry := auditLogEntry{
 		ID:          entryID,
 		Timestamp:   time.Now(),
 		Body:        body,
@@ -502,21 +476,22 @@ func (r *auditLogReceiver) handleAuditLogs(w http.ResponseWriter, req *http.Requ
 		return
 	}
 
-	if r.storage != nil {
-		if err := r.storeLogAndUpdateKeysList(key, entryData); err != nil {
-			r.logger.Error("Failed to store audit log entry", zap.String("key", key), zap.Error(err))
-			errorutil.HTTPError(w, err)
-			r.obsrecv.EndLogsOp(ctx, "json", 0, err)
-			return
-		}
-
-		r.logger.Info("Stored audit log entry", zap.String("id", entryID), zap.String("content_type", contentType))
-	} else {
+	if r.storage == nil {
 		r.logger.Error("Storage client not initialized")
-		errorutil.HTTPError(w, fmt.Errorf("storage client not initialized"))
-		r.obsrecv.EndLogsOp(ctx, "json", 0, fmt.Errorf("storage client not initialized"))
+		storageErr := errors.New("storage client not initialized")
+		errorutil.HTTPError(w, storageErr)
+		r.obsrecv.EndLogsOp(ctx, "json", 0, storageErr)
 		return
 	}
+
+	if storeErr := r.storeLogAndUpdateKeysList(key, entryData); storeErr != nil {
+		r.logger.Error("Failed to store audit log entry", zap.String("key", key), zap.Error(storeErr))
+		errorutil.HTTPError(w, storeErr)
+		r.obsrecv.EndLogsOp(ctx, "json", 0, storeErr)
+		return
+	}
+
+	r.logger.Info("Stored audit log entry", zap.String("id", entryID), zap.String("content_type", contentType))
 
 	w.WriteHeader(http.StatusAccepted)
 
@@ -565,7 +540,7 @@ func (r *auditLogReceiver) handleOTLPProtobuf(w http.ResponseWriter, req *http.R
 	}
 
 	if r.storage != nil {
-		entry := AuditLogEntry{
+		entry := auditLogEntry{
 			ID:          entryID,
 			Timestamp:   time.Now(),
 			Body:        body,
@@ -661,19 +636,19 @@ func (r *auditLogReceiver) handleOTLPJSON(w http.ResponseWriter, req *http.Reque
 	}
 
 	if r.storage != nil {
-		entry := AuditLogEntry{
+		entry := auditLogEntry{
 			ID:          entryID,
 			Timestamp:   time.Now(),
 			Body:        bodyToStore,
 			ContentType: "application/x-protobuf",
 		}
 
-		entryData, err := json.Marshal(entry)
-		if err != nil {
-			r.logger.Error("Failed to marshal audit log entry", zap.Error(err))
-			errorutil.HTTPError(w, err)
-			r.obsrecv.EndLogsOp(ctx, "json", numRecords, err)
-			return err
+		entryData, marshalErr := json.Marshal(entry)
+		if marshalErr != nil {
+			r.logger.Error("Failed to marshal audit log entry", zap.Error(marshalErr))
+			errorutil.HTTPError(w, marshalErr)
+			r.obsrecv.EndLogsOp(ctx, "json", numRecords, marshalErr)
+			return marshalErr
 		}
 
 		if err := r.storeLogAndUpdateKeysList(key, entryData); err != nil {
