@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
 # Test script for audit log receiver
 echo "Testing Audit Log Receiver..."
 
