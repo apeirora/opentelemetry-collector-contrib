@@ -28,7 +28,7 @@ import (
 // TODO
 //Fix loging of processed log(count only vaild one)
 
-// what will happen if we implement persistance que in exporter?
+// what will happen if we implement persistence que in exporter?
 // entry point, should it be same as for logs, should we check for audit logs?
 // filtering for attribute or sth else
 const (
@@ -37,7 +37,7 @@ const (
 	defaultProcessInterval = 30 * time.Second
 )
 
-type AuditLogEntry struct {
+type auditLogEntry struct {
 	ID          string    `json:"id"`
 	Timestamp   time.Time `json:"timestamp"`
 	Body        []byte    `json:"body"`
@@ -54,7 +54,7 @@ type auditLogReceiver struct {
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
 
-	circuitBreaker *CircuitBreaker
+	circuitBreaker *circuitBreaker
 	obsrecv        *receiverhelper.ObsReport
 
 	keysListMutex sync.Mutex
@@ -81,7 +81,7 @@ func NewReceiver(cfg *Config, set receiver.Settings, consumer consumer.Logs) (*a
 		obsrecv:  obsrecv,
 	}
 
-	r.circuitBreaker = NewCircuitBreaker(cfg.CircuitBreaker, set.Logger)
+	r.circuitBreaker = newCircuitBreaker(cfg.CircuitBreaker, set.Logger)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/logs", r.handleAuditLogs)
@@ -140,9 +140,9 @@ func (r *auditLogReceiver) Shutdown(ctx context.Context) error {
 	return r.server.Shutdown(ctx)
 }
 
-func (r *auditLogReceiver) processAuditLog(entry *AuditLogEntry) error {
+func (r *auditLogReceiver) processAuditLog(entry *auditLogEntry) error {
 	if r.cfg.CircuitBreaker.Enabled {
-		shouldProcess, err := r.circuitBreaker.CheckCircuitBreakerState(entry.ID)
+		shouldProcess, err := r.circuitBreaker.checkCircuitBreakerState(entry.ID)
 		if !shouldProcess {
 			return err
 		}
@@ -255,7 +255,7 @@ func (r *auditLogReceiver) processStoredLogs() {
 			continue
 		}
 
-		var entry AuditLogEntry
+		var entry auditLogEntry
 		if err := json.Unmarshal(data, &entry); err != nil {
 			r.logger.Error("Failed to unmarshal audit log entry", zap.String("key", key), zap.Error(err))
 			continue
@@ -266,7 +266,7 @@ func (r *auditLogReceiver) processStoredLogs() {
 		}
 
 		if r.cfg.CircuitBreaker.Enabled {
-			shouldProcess, _ := r.circuitBreaker.CheckCircuitBreakerState(key)
+			shouldProcess, _ := r.circuitBreaker.checkCircuitBreakerState(key)
 			if !shouldProcess {
 				r.logger.Debug("Circuit breaker is open, skipping processing", zap.String("key", key))
 				continue
@@ -487,7 +487,7 @@ func (r *auditLogReceiver) handleAuditLogs(w http.ResponseWriter, req *http.Requ
 
 	ctx := r.obsrecv.StartLogsOp(req.Context())
 
-	entry := AuditLogEntry{
+	entry := auditLogEntry{
 		ID:          entryID,
 		Timestamp:   time.Now(),
 		Body:        body,
@@ -565,7 +565,7 @@ func (r *auditLogReceiver) handleOTLPProtobuf(w http.ResponseWriter, req *http.R
 	}
 
 	if r.storage != nil {
-		entry := AuditLogEntry{
+		entry := auditLogEntry{
 			ID:          entryID,
 			Timestamp:   time.Now(),
 			Body:        body,
@@ -661,7 +661,7 @@ func (r *auditLogReceiver) handleOTLPJSON(w http.ResponseWriter, req *http.Reque
 	}
 
 	if r.storage != nil {
-		entry := AuditLogEntry{
+		entry := auditLogEntry{
 			ID:          entryID,
 			Timestamp:   time.Now(),
 			Body:        bodyToStore,

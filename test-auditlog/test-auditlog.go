@@ -10,23 +10,24 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/auditlogreceiver"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/receiver"
 	"go.uber.org/zap"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/auditlogreceiver"
 )
 
 type testConsumer struct {
 	logger *zap.Logger
 }
 
-func (tc *testConsumer) Capabilities() consumer.Capabilities {
+func (_ *testConsumer) Capabilities() consumer.Capabilities {
 	return consumer.Capabilities{MutatesData: false}
 }
 
-func (tc *testConsumer) ConsumeLogs(ctx context.Context, logs plog.Logs) error {
+func (tc *testConsumer) ConsumeLogs(_ context.Context, logs plog.Logs) error {
 	tc.logger.Info("Received logs", zap.Int("count", logs.LogRecordCount()))
 	for i := 0; i < logs.ResourceLogs().Len(); i++ {
 		for j := 0; j < logs.ResourceLogs().At(i).ScopeLogs().Len(); j++ {
@@ -43,7 +44,9 @@ func (tc *testConsumer) ConsumeLogs(ctx context.Context, logs plog.Logs) error {
 
 func main() {
 	logger, _ := zap.NewDevelopment()
-	defer logger.Sync()
+	defer func() {
+		_ = logger.Sync()
+	}()
 
 	// Create the receiver factory
 	factory := auditlogreceiver.NewFactory()
@@ -64,6 +67,7 @@ func main() {
 	// Create the receiver directly using the internal function
 	recv, err := auditlogreceiver.NewReceiver(cfg, settings, consumer)
 	if err != nil {
+		_ = logger.Sync()
 		log.Fatalf("Failed to create receiver: %v", err)
 	}
 
@@ -73,6 +77,7 @@ func main() {
 
 	err = recv.Start(ctx, nil)
 	if err != nil {
+		_ = logger.Sync()
 		log.Fatalf("Failed to start receiver: %v", err)
 	}
 
@@ -89,6 +94,7 @@ func main() {
 	// Shutdown the receiver
 	err = recv.Shutdown(ctx)
 	if err != nil {
+		_ = logger.Sync()
 		log.Fatalf("Failed to shutdown receiver: %v", err)
 	}
 }
