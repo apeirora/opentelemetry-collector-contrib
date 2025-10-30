@@ -273,6 +273,13 @@ func Test_e2e_editors(t *testing.T) {
 			},
 		},
 		{
+			statement: `replace_all_patterns(attributes, "value", Concat(["/","health"],""), "@")`,
+			want: func(tCtx ottllog.TransformContext) {
+				tCtx.GetLogRecord().Attributes().PutStr("http.path", "@")
+				tCtx.GetLogRecord().Attributes().PutStr("http.url", "http://localhost@")
+			},
+		},
+		{
 			statement: `replace_match(attributes["http.path"], "*/*", "test")`,
 			want: func(tCtx ottllog.TransformContext) {
 				tCtx.GetLogRecord().Attributes().PutStr("http.path", "test")
@@ -282,6 +289,12 @@ func Test_e2e_editors(t *testing.T) {
 			statement: `replace_pattern(attributes["http.path"], "/", "@")`,
 			want: func(tCtx ottllog.TransformContext) {
 				tCtx.GetLogRecord().Attributes().PutStr("http.path", "@health")
+			},
+		},
+		{
+			statement: `replace_pattern(attributes["http.path"], Concat(["/","health"],""), "@")`,
+			want: func(tCtx ottllog.TransformContext) {
+				tCtx.GetLogRecord().Attributes().PutStr("http.path", "@")
 			},
 		},
 		{
@@ -1008,6 +1021,15 @@ func Test_e2e_converters(t *testing.T) {
 		},
 		{
 			statement: `set(attributes["test"], Sort(Split(attributes["flags"], "|"), "desc"))`,
+			want: func(tCtx ottllog.TransformContext) {
+				s := tCtx.GetLogRecord().Attributes().PutEmptySlice("test")
+				s.AppendEmpty().SetStr("C")
+				s.AppendEmpty().SetStr("B")
+				s.AppendEmpty().SetStr("A")
+			},
+		},
+		{
+			statement: `set(attributes["test"], Sort(Split(attributes["flags"], attributes["split_delimiter"]), "desc"))`,
 			want: func(tCtx ottllog.TransformContext) {
 				s := tCtx.GetLogRecord().Attributes().PutEmptySlice("test")
 				s.AppendEmpty().SetStr("C")
@@ -1886,6 +1908,7 @@ func constructLogTransformContext() ottllog.TransformContext {
 	logRecord.SetSpanID(spanID)
 	logRecord.Attributes().PutStr("encoding", "base64")
 	logRecord.Attributes().PutStr("http.method", "get")
+	logRecord.Attributes().PutStr("split_delimiter", "|")
 	logRecord.Attributes().PutStr("dynamicprefix", "operation")
 	logRecord.Attributes().PutStr("dynamicsuffix", "tionA")
 	logRecord.Attributes().PutStr("http.path", "/health")
