@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -38,14 +39,55 @@ func (rs *redisStorage) Start(ctx context.Context, _ component.Host) error {
 	if err != nil {
 		return err
 	}
-	c := redis.NewClient(&redis.Options{
-		Addr:      rs.cfg.Endpoint,
-		Password:  string(rs.cfg.Password),
-		DB:        rs.cfg.DB,
-		TLSConfig: tlsConfig,
-	})
-	rs.client = c
-	return nil
+
+	maxRetries := 10
+	retryDelay := 2 * time.Second
+	var lastErr error
+
+	time.Sleep(5 * time.Second)
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		dialer := &net.Dialer{
+			Timeout: 30 * time.Second,
+		}
+
+		c := redis.NewClient(&redis.Options{
+			Addr:            rs.cfg.Endpoint,
+			Password:        string(rs.cfg.Password),
+			DB:              rs.cfg.DB,
+			TLSConfig:       tlsConfig,
+			Dialer:          dialer.DialContext,
+			DialTimeout:     30 * time.Second,
+			ReadTimeout:     30 * time.Second,
+			WriteTimeout:    30 * time.Second,
+			PoolTimeout:     30 * time.Second,
+			MaxRetries:      0,
+			MinRetryBackoff: 100 * time.Millisecond,
+			MaxRetryBackoff: 2 * time.Second,
+			PoolSize:        1,
+			MinIdleConns:    0,
+		})
+
+		pingCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		err := c.Ping(pingCtx).Err()
+		cancel()
+
+		if err == nil {
+			rs.client = c
+			rs.logger.Info("Successfully connected to Redis", zap.String("endpoint", rs.cfg.Endpoint))
+			return nil
+		}
+
+		c.Close()
+		lastErr = err
+
+		if attempt < maxRetries-1 {
+			rs.logger.Info("Redis connection attempt failed, retrying...", zap.String("endpoint", rs.cfg.Endpoint), zap.Int("attempt", attempt+1), zap.Error(err))
+			time.Sleep(retryDelay)
+		}
+	}
+
+	return fmt.Errorf("failed to connect to Redis at %s after %d attempts: %w", rs.cfg.Endpoint, maxRetries, lastErr)
 }
 
 // Shutdown will close any open databases
