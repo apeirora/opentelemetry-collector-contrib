@@ -1,5 +1,3 @@
-#!/bin/bash
-
 beta_modules=(
   "go.opentelemetry.io/collector"
   "go.opentelemetry.io/collector/internal/memorylimiter"
@@ -60,6 +58,7 @@ beta_modules=(
   "go.opentelemetry.io/collector/scraper"
   "go.opentelemetry.io/collector/scraper/scraperhelper"
   "go.opentelemetry.io/collector/scraper/scrapertest"
+  "go.opentelemetry.io/collector/scraper/xscraper"
   "go.opentelemetry.io/collector/service"
   "go.opentelemetry.io/collector/service/hostcapabilities"
   "go.opentelemetry.io/collector/service/telemetry/telemetrytest"
