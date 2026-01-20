@@ -40,15 +40,11 @@ func (rs *redisStorage) Start(ctx context.Context, _ component.Host) error {
 		return err
 	}
 
-	maxRetries := 10
-	retryDelay := 2 * time.Second
 	var lastErr error
 
-	time.Sleep(5 * time.Second)
-
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for attempt := 0; attempt < rs.cfg.MaxRetries; attempt++ {
 		dialer := &net.Dialer{
-			Timeout: 30 * time.Second,
+			Timeout: rs.cfg.DialTimeout,
 		}
 
 		c := redis.NewClient(&redis.Options{
@@ -57,16 +53,16 @@ func (rs *redisStorage) Start(ctx context.Context, _ component.Host) error {
 			DB:              rs.cfg.DB,
 			TLSConfig:       tlsConfig,
 			Dialer:          dialer.DialContext,
-			DialTimeout:     30 * time.Second,
-			ReadTimeout:     30 * time.Second,
-			WriteTimeout:    30 * time.Second,
-			PoolTimeout:     30 * time.Second,
+			DialTimeout:     rs.cfg.DialTimeout,
+			ReadTimeout:     rs.cfg.ReadTimeout,
+			WriteTimeout:    rs.cfg.WriteTimeout,
+			PoolTimeout:     rs.cfg.PoolTimeout,
 			MaxRetries:      0,
-			MinRetryBackoff: 100 * time.Millisecond,
-			MaxRetryBackoff: 2 * time.Second,
+			MinRetryBackoff: rs.cfg.MinRetryBackoff,
+			MaxRetryBackoff: rs.cfg.MaxRetryBackoff,
 		})
 
-		pingCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		pingCtx, cancel := context.WithTimeout(ctx, rs.cfg.PingTimeout)
 		err := c.Ping(pingCtx).Err()
 		cancel()
 
@@ -79,13 +75,13 @@ func (rs *redisStorage) Start(ctx context.Context, _ component.Host) error {
 		c.Close()
 		lastErr = err
 
-		if attempt < maxRetries-1 {
+		if attempt < rs.cfg.MaxRetries-1 {
 			rs.logger.Info("Redis connection attempt failed, retrying...", zap.String("endpoint", rs.cfg.Endpoint), zap.Int("attempt", attempt+1), zap.Error(err))
-			time.Sleep(retryDelay)
+			time.Sleep(rs.cfg.RetryDelay)
 		}
 	}
 
-	return fmt.Errorf("failed to connect to Redis at %s after %d attempts: %w", rs.cfg.Endpoint, maxRetries, lastErr)
+	return fmt.Errorf("failed to connect to Redis at %s after %d attempts: %w", rs.cfg.Endpoint, rs.cfg.MaxRetries, lastErr)
 }
 
 // Shutdown will close any open databases
