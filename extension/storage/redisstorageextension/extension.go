@@ -64,8 +64,6 @@ func (rs *redisStorage) Start(ctx context.Context, _ component.Host) error {
 			MaxRetries:      0,
 			MinRetryBackoff: 100 * time.Millisecond,
 			MaxRetryBackoff: 2 * time.Second,
-			PoolSize:        1,
-			MinIdleConns:    0,
 		})
 
 		pingCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
