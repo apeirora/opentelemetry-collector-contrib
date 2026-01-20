@@ -26,6 +26,8 @@ type redisStorage struct {
 // Ensure this storage extension implements the appropriate interface
 var _ storage.Extension = (*redisStorage)(nil)
 
+var newRedisClient = redis.NewClient
+
 func newRedisStorage(logger *zap.Logger, config *Config) (extension.Extension, error) {
 	return &redisStorage{
 		cfg:    config,
@@ -47,7 +49,7 @@ func (rs *redisStorage) Start(ctx context.Context, _ component.Host) error {
 			Timeout: rs.cfg.DialTimeout,
 		}
 
-		c := redis.NewClient(&redis.Options{
+		c := newRedisClient(&redis.Options{
 			Addr:            rs.cfg.Endpoint,
 			Password:        string(rs.cfg.Password),
 			DB:              rs.cfg.DB,
