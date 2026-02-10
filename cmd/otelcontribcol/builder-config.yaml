@@ -143,6 +143,7 @@ processors:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/transformprocessor v0.153.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/unrollprocessor v0.153.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/remotetapprocessor v0.153.0
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/certificatehashprocessor v0.145.0
 
 receivers:
   - gomod: go.opentelemetry.io/collector/receiver/nopreceiver v0.153.1-0.20260528150546-fe2cf23ff222
