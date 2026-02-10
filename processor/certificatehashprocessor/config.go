@@ -12,30 +12,28 @@ import (
 
 const (
 	defaultHashAlgorithm = "SHA256"
-	defaultCertPath      = "/etc/certs/cert.pem"
-	defaultKeyPath       = "/etc/certs/key.pem"
-	defaultCAPath        = "/etc/certs/ca.pem"
 )
 
 var (
 	errInvalidHashAlgorithm = errors.New("hash_algorithm must be SHA256 or SHA512")
-	errMissingCertPath      = errors.New("cert_path is required")
-	errMissingKeyPath       = errors.New("key_path is required")
 )
 
 type Config struct {
-	HashAlgorithm string `mapstructure:"hash_algorithm"`
-	CertPath      string `mapstructure:"cert_path"`
-	KeyPath       string `mapstructure:"key_path"`
-	CAPath        string `mapstructure:"ca_path"`
+	HashAlgorithm string           `mapstructure:"hash_algorithm"`
+	K8sSecret     *K8sSecretConfig `mapstructure:"k8s_secret"`
+}
+
+type K8sSecretConfig struct {
+	Name      string `mapstructure:"name"`
+	Namespace string `mapstructure:"namespace"`
+	CertKey   string `mapstructure:"cert_key"`
+	KeyKey    string `mapstructure:"key_key"`
+	CAKey     string `mapstructure:"ca_key"`
 }
 
 func createDefaultConfig() component.Config {
 	return &Config{
 		HashAlgorithm: defaultHashAlgorithm,
-		CertPath:      defaultCertPath,
-		KeyPath:       defaultKeyPath,
-		CAPath:        defaultCAPath,
 	}
 }
 
@@ -44,12 +42,21 @@ func (c *Config) Validate() error {
 		return errInvalidHashAlgorithm
 	}
 
-	if c.CertPath == "" {
-		return errMissingCertPath
+	if c.K8sSecret == nil {
+		return errors.New("k8s_secret is required")
 	}
 
-	if c.KeyPath == "" {
-		return errMissingKeyPath
+	if c.K8sSecret.Name == "" {
+		return errors.New("k8s_secret.name is required")
+	}
+	if c.K8sSecret.CertKey == "" {
+		return errors.New("k8s_secret.cert_key is required")
+	}
+	if c.K8sSecret.KeyKey == "" {
+		return errors.New("k8s_secret.key_key is required")
+	}
+	if c.K8sSecret.Namespace == "" {
+		c.K8sSecret.Namespace = "default"
 	}
 
 	return nil
@@ -61,3 +68,5 @@ func (c *Config) GetHash() crypto.Hash {
 	}
 	return crypto.SHA256
 }
+
+var _ component.Config = (*Config)(nil)
