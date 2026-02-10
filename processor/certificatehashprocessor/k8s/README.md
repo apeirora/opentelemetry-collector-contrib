@@ -53,6 +53,3 @@ The processor adds two attributes to each log record:
 - `otel.certificate.hash` - Base64-encoded hash of the log record
 - `otel.certificate.signature` - Base64-encoded RSA signature of the hash
 
-## Troubleshooting
-
-See `QUICK-FIX.md` for common issues and solutions.

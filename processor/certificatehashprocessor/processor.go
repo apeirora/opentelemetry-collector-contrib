@@ -30,10 +30,15 @@ type certificateHashProcessor struct {
 }
 
 func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settings) (*certificateHashProcessor, error) {
-	reader, err := NewCertificateReader(cfg.CertPath, cfg.KeyPath)
+	ctx := context.Background()
+	reader, err := NewCertificateReaderFromK8sSecret(ctx, cfg.K8sSecret)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize certificate reader: %w", err)
+		return nil, fmt.Errorf("failed to initialize certificate reader from k8s secret: %w", err)
 	}
+	settings.Logger.Info("Using Kubernetes secret for certificates",
+		zap.String("secret", cfg.K8sSecret.Name),
+		zap.String("namespace", cfg.K8sSecret.Namespace),
+	)
 
 	var hashFunc func() hash.Hash
 	switch cfg.GetHash() {
