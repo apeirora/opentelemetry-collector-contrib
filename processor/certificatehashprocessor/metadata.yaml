@@ -1,0 +1,24 @@
+type: certificatehash
+
+status:
+  class: processor
+  stability:
+    alpha: [logs]
+  distributions: [contrib]
+  warnings: []
+  codeowners:
+    active: []
+
+tests:
+  config:
+
+telemetry:
+  metrics:
+    certificatehash_processor_processed_logs:
+      description: Number of log records processed with hash and signature.
+      stability:
+        level: development
+      unit: "{records}"
+      enabled: true
+      histogram:
+        value_type: int
