@@ -1,0 +1,114 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: otel-demo
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: otelcol-test-certs
+  namespace: otel-demo
+type: Opaque
+data:
+  cert.pem: ""
+  key.pem: ""
+  ca.pem: ""
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otelcol-certificatehash
+  namespace: otel-demo
+  labels:
+    app: otelcol-certificatehash
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: otelcol-certificatehash
+  template:
+    metadata:
+      labels:
+        app: otelcol-certificatehash
+    spec:
+      containers:
+      - name: otelcol
+        image: otelcol-certificatehash:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 4317
+          name: otlp-grpc
+        - containerPort: 4318
+          name: otlp-http
+        - containerPort: 8888
+          name: metrics
+        volumeMounts:
+        - name: certs
+          mountPath: /etc/certs
+          readOnly: true
+        - name: config
+          mountPath: /etc/otelcol
+        env:
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: "service.name=otelcol-certificatehash"
+      volumes:
+      - name: certs
+        secret:
+          secretName: otelcol-test-certs
+          defaultMode: 420
+      - name: config
+        configMap:
+          name: otelcol-certificatehash-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otelcol-certificatehash-config
+  namespace: otel-demo
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    
+    processors:
+      certificatehash:
+        hash_algorithm: SHA256
+        cert_path: /etc/certs/cert.pem
+        key_path: /etc/certs/key.pem
+        ca_path: /etc/certs/ca.pem
+      batch:
+    
+    exporters:
+      debug:
+        verbosity: detailed
+    
+    service:
+      pipelines:
+        logs:
+          receivers: [otlp]
+          processors: [certificatehash, batch]
+          exporters: [debug]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otelcol-certificatehash
+  namespace: otel-demo
+spec:
+  type: ClusterIP
+  ports:
+  - port: 4317
+    targetPort: 4317
+    protocol: TCP
+    name: otlp-grpc
+  - port: 4318
+    targetPort: 4318
+    protocol: TCP
+    name: otlp-http
+  selector:
+    app: otelcol-certificatehash
