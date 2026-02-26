@@ -17,8 +17,10 @@ The certificate hash processor is a custom component and must be included in a c
    ```
 
 2. **Build the Docker image:**
+   
+   **Important:** Run this command from the repository root directory:
    ```bash
-   docker build -f Dockerfile.certificatehash -t otelcol-certificatehash:latest .
+   docker build -f processor/certificatehashprocessor/k8s/Dockerfile.certificatehash -t otelcol-certificatehash:latest .
    ```
 
    The Dockerfile:
@@ -27,10 +29,23 @@ The certificate hash processor is a custom component and must be included in a c
    - Runs `make otelcontribcol` to build the binary
    - Creates a minimal alpine image with the collector binary
 
-3. **Load into kind (if using kind cluster):**
+3. **Load the image into your Kubernetes cluster:**
+   
+   **For kind clusters:**
    ```bash
-   kind load docker-image otelcol-certificatehash:latest
+   kind load docker-image otelcol-certificatehash:latest --name otel-demo
    ```
+   
+   Note: If your cluster has a different name, replace `otel-demo` with your cluster name. Check cluster names with `kind get clusters`.
+   
+   **For minikube clusters:**
+   ```bash
+   minikube image load otelcol-certificatehash:latest
+   ```
+   
+   **For other local clusters:**
+   - Ensure `imagePullPolicy: Never` is set in your deployment YAML
+   - The image should be available if Docker is shared with the cluster
 
 4. **Verify the image:**
    ```bash
@@ -44,5 +59,6 @@ The certificate hash processor is a custom component and must be included in a c
   - Run `make genotelcontribcol` manually to regenerate code
 
 - **Image not found in cluster:**
-  - For kind: Use `kind load docker-image`
+  - For kind: Use `kind load docker-image otelcol-certificatehash:latest --name <cluster-name>`
+  - For minikube: Use `minikube image load otelcol-certificatehash:latest`
   - For other clusters: Push to a registry or use `imagePullPolicy: Never`
