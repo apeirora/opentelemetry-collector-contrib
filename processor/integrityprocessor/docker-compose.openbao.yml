@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  openbao:
+    image: openbao/openbao:latest
+    container_name: openbao
+    ports:
+      - "8200:8200"
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: "dev-token"
+      VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - openbao-data:/vault/file
+    command: ["vault", "server", "-dev"]
+    networks:
+      - openbao-network
+
+volumes:
+  openbao-data:
+
+networks:
+  openbao-network:
+    driver: bridge

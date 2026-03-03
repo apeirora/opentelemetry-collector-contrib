@@ -1,0 +1,33 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  integrity:
+    sign:
+      algorithm: HMAC-SHA256
+      signature_attribute: otel.integrity.signature
+      include_resource_attributes: true
+      openbao_transit:
+        address: http://localhost:8200
+        token: dev-token
+        key_name: otel-hmac-key
+        mount_path: transit
+
+exporters:
+  debug:
+    verbosity: detailed
+
+service:
+  telemetry:
+    metrics:
+      level: none
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [integrity]
+      exporters: [debug]

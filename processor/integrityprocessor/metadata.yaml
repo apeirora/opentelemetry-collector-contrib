@@ -1,0 +1,9 @@
+type: integrity
+
+status:
+  class: processor
+  stability:
+    alpha: [logs]
+  distributions: [contrib]
+  codeowners:
+    active: []
