@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash"
+	"strings"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
@@ -31,11 +32,22 @@ type certificateHashProcessor struct {
 
 func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settings) (*certificateHashProcessor, error) {
 	ctx := context.Background()
-	reader, err := NewCertificateReaderFromK8sSecret(ctx, cfg.K8sSecret)
+	settings.Logger.Info("Initializing certificate reader from Kubernetes secret",
+		zap.String("secret", cfg.K8sSecret.Name),
+		zap.String("namespace", cfg.K8sSecret.Namespace),
+		zap.String("cert_key", cfg.K8sSecret.CertKey),
+		zap.String("key_key", cfg.K8sSecret.KeyKey),
+	)
+	reader, err := NewCertificateReaderFromK8sSecret(ctx, cfg.K8sSecret, settings.Logger)
 	if err != nil {
+		settings.Logger.Error("Failed to initialize certificate reader from k8s secret",
+			zap.Error(err),
+			zap.String("secret", cfg.K8sSecret.Name),
+			zap.String("namespace", cfg.K8sSecret.Namespace),
+		)
 		return nil, fmt.Errorf("failed to initialize certificate reader from k8s secret: %w", err)
 	}
-	settings.Logger.Info("Using Kubernetes secret for certificates",
+	settings.Logger.Info("Successfully initialized certificate reader from Kubernetes secret",
 		zap.String("secret", cfg.K8sSecret.Name),
 		zap.String("namespace", cfg.K8sSecret.Namespace),
 	)
@@ -88,6 +100,11 @@ func (p *certificateHashProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs
 	return p.nextLogs.ConsumeLogs(ctx, ld)
 }
 
+// processLogRecord processes a single log record by computing its hash and signing it.
+// It adds three attributes to the log record:
+//   - otel.log.hash: base64-encoded hash of the serialized log content
+//   - otel.log.signature: base64-encoded RSA signature of the hash
+//   - otel.log.sign_content: indicates what content was signed (body/meta/attr)
 func (p *certificateHashProcessor) processLogRecord(lr plog.LogRecord) error {
 	logData, err := p.serializeLogRecord(lr)
 	if err != nil {
@@ -108,44 +125,61 @@ func (p *certificateHashProcessor) processLogRecord(lr plog.LogRecord) error {
 	}
 	signatureBase64 := base64.StdEncoding.EncodeToString(signature)
 
-	lr.Attributes().PutStr("otel.certificate.hash", hashBase64)
-	lr.Attributes().PutStr("otel.certificate.signature", signatureBase64)
+	lr.Attributes().PutStr("otel.log.hash", hashBase64)
+	lr.Attributes().PutStr("otel.log.signature", signatureBase64)
+	lr.Attributes().PutStr("otel.log.sign_content", p.config.SignContent)
 
 	return nil
 }
 
+// serializeLogRecord serializes the log record to JSON bytes based on the configured sign_content setting.
+// Returns the JSON-encoded bytes representing the log record content that will be hashed and signed.
+// The content included depends on sign_content: body (body only), meta (body + metadata), or attr (body + metadata + attributes).
 func (p *certificateHashProcessor) serializeLogRecord(lr plog.LogRecord) ([]byte, error) {
 	data := make(map[string]interface{})
 
-	if lr.Body().Type() == pcommon.ValueTypeStr {
-		data["body"] = lr.Body().Str()
+	signContent := p.config.SignContent
+	if signContent == "" {
+		signContent = defaultSignContent
 	}
 
-	attrs := make(map[string]interface{})
-	lr.Attributes().Range(func(k string, v pcommon.Value) bool {
-		attrs[k] = p.valueToInterface(v)
-		return true
-	})
-	data["attributes"] = attrs
-
-	if lr.Timestamp() != 0 {
-		data["timestamp"] = lr.Timestamp().AsTime().UnixNano()
+	if signContent == SignContentBody || signContent == SignContentMeta || signContent == SignContentAttr {
+		if lr.Body().Type() == pcommon.ValueTypeStr {
+			data["body"] = lr.Body().Str()
+		}
 	}
 
-	if lr.SeverityNumber() != 0 {
-		data["severity_number"] = lr.SeverityNumber()
+	if signContent == SignContentMeta || signContent == SignContentAttr {
+		if lr.Timestamp() != 0 {
+			data["timestamp"] = lr.Timestamp().AsTime().UnixNano()
+		}
+
+		if lr.SeverityNumber() != 0 {
+			data["severity_number"] = lr.SeverityNumber()
+		}
+
+		if lr.SeverityText() != "" {
+			data["severity_text"] = lr.SeverityText()
+		}
+
+		if !lr.TraceID().IsEmpty() {
+			data["trace_id"] = lr.TraceID().String()
+		}
+
+		if !lr.SpanID().IsEmpty() {
+			data["span_id"] = lr.SpanID().String()
+		}
 	}
 
-	if lr.SeverityText() != "" {
-		data["severity_text"] = lr.SeverityText()
-	}
-
-	if !lr.TraceID().IsEmpty() {
-		data["trace_id"] = lr.TraceID().String()
-	}
-
-	if !lr.SpanID().IsEmpty() {
-		data["span_id"] = lr.SpanID().String()
+	if signContent == SignContentAttr {
+		attrs := make(map[string]interface{})
+		lr.Attributes().Range(func(k string, v pcommon.Value) bool {
+			if !strings.HasPrefix(k, "otel.log.") {
+				attrs[k] = p.valueToInterface(v)
+			}
+			return true
+		})
+		data["attributes"] = attrs
 	}
 
 	return json.Marshal(data)
