@@ -12,14 +12,23 @@ import (
 
 const (
 	defaultHashAlgorithm = "SHA256"
+	defaultSignContent   = "body"
+)
+
+const (
+	SignContentBody = "body"
+	SignContentMeta = "meta"
+	SignContentAttr = "attr"
 )
 
 var (
 	errInvalidHashAlgorithm = errors.New("hash_algorithm must be SHA256 or SHA512")
+	errInvalidSignContent   = errors.New("sign_content must be body, meta, or attr")
 )
 
 type Config struct {
 	HashAlgorithm string           `mapstructure:"hash_algorithm"`
+	SignContent   string           `mapstructure:"sign_content"`
 	K8sSecret     *K8sSecretConfig `mapstructure:"k8s_secret"`
 }
 
@@ -34,12 +43,19 @@ type K8sSecretConfig struct {
 func createDefaultConfig() component.Config {
 	return &Config{
 		HashAlgorithm: defaultHashAlgorithm,
+		SignContent:   defaultSignContent,
 	}
 }
 
 func (c *Config) Validate() error {
 	if c.HashAlgorithm != "SHA256" && c.HashAlgorithm != "SHA512" {
 		return errInvalidHashAlgorithm
+	}
+
+	if c.SignContent == "" {
+		c.SignContent = defaultSignContent
+	} else if c.SignContent != SignContentBody && c.SignContent != SignContentMeta && c.SignContent != SignContentAttr {
+		return errInvalidSignContent
 	}
 
 	if c.K8sSecret == nil {
