@@ -11,6 +11,8 @@ import (
 	"encoding/pem"
 	"fmt"
 	"strings"
+
+	"go.uber.org/zap"
 )
 
 type CertificateReader struct {
@@ -18,13 +20,18 @@ type CertificateReader struct {
 	key  *rsa.PrivateKey
 }
 
-func NewCertificateReaderFromK8sSecret(ctx context.Context, config *K8sSecretConfig) (*CertificateReader, error) {
-	certPEM, err := fetchSecretData(ctx, config.Name, config.Namespace, config.CertKey)
+func NewCertificateReaderFromK8sSecret(ctx context.Context, config *K8sSecretConfig, logger interface{}) (*CertificateReader, error) {
+	var zapLogger *zap.Logger
+	if l, ok := logger.(*zap.Logger); ok {
+		zapLogger = l
+	}
+
+	certPEM, err := fetchSecretData(ctx, config.Name, config.Namespace, config.CertKey, zapLogger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch certificate from k8s secret: %w", err)
 	}
 
-	keyPEM, err := fetchSecretData(ctx, config.Name, config.Namespace, config.KeyKey)
+	keyPEM, err := fetchSecretData(ctx, config.Name, config.Namespace, config.KeyKey, zapLogger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch private key from k8s secret: %w", err)
 	}
