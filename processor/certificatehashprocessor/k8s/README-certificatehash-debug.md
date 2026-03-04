@@ -20,13 +20,15 @@ The certificate hash processor adds cryptographic integrity verification to log 
 
 The standard OpenTelemetry Collector image doesn't include custom processors. Build a custom image:
 
+**Important:** Run this command from the repository root directory
+
 ```bash
-docker build -f Dockerfile.certificatehash -t otelcol-certificatehash:latest .
+docker build -f processor/certificatehashprocessor/k8s/Dockerfile.certificatehash -t otelcol-certificatehash:latest .
 ```
 
 For kind clusters:
 ```bash
-kind load docker-image otelcol-certificatehash:latest
+kind load docker-image otelcol-certificatehash:latest --name otel-demo
 ```
 
 See `BUILD-CUSTOM-IMAGE.md` for detailed instructions.
@@ -52,14 +54,22 @@ kubectl create secret generic otelcol-test-certs `
 kubectl apply -f processor/certificatehashprocessor/k8s/otelcol-certificatehash-debug.yaml
 ```
 
-## Step 5: Verify Deployment
+## Step 5: Restart Deployment
+
+Restart the deployment to ensure pods pick up any configuration changes:
+
+```bash
+kubectl rollout restart deployment/otelcol-certificatehash -n otel-demo
+```
+
+## Step 6: Verify Deployment
 
 ```bash
 kubectl get pods -n otel-demo
 kubectl logs -n otel-demo -l app=otelcol-certificatehash
 ```
 
-## Step 6: Test the Processor
+## Step 7: Test the Processor
 
 Use the test script:
 ```powershell
