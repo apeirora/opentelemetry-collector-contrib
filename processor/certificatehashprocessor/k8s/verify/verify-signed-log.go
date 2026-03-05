@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -220,7 +221,8 @@ func main() {
 			data["attributes"] = attrs
 		}
 
-		serialized, err := json.Marshal(data)
+		sortedData := sortMapKeys(data)
+		serialized, err := json.Marshal(sortedData)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error serializing log record %d: %v\n", i+1, err)
 			allValid = false
@@ -280,5 +282,29 @@ func main() {
 	} else {
 		fmt.Printf("\n❌ Some log records failed verification\n")
 		os.Exit(1)
+	}
+}
+
+func sortMapKeys(v interface{}) interface{} {
+	switch val := v.(type) {
+	case map[string]interface{}:
+		sorted := make(map[string]interface{})
+		keys := make([]string, 0, len(val))
+		for k := range val {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			sorted[k] = sortMapKeys(val[k])
+		}
+		return sorted
+	case []interface{}:
+		sorted := make([]interface{}, len(val))
+		for i, item := range val {
+			sorted[i] = sortMapKeys(item)
+		}
+		return sorted
+	default:
+		return val
 	}
 }

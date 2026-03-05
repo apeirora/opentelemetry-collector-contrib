@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash"
+	"sort"
 	"strings"
 
 	"go.opentelemetry.io/collector/component"
@@ -182,7 +183,36 @@ func (p *certificateHashProcessor) serializeLogRecord(lr plog.LogRecord) ([]byte
 		data["attributes"] = attrs
 	}
 
-	return json.Marshal(data)
+	return p.marshalJSONDeterministic(data)
+}
+
+func (p *certificateHashProcessor) marshalJSONDeterministic(v interface{}) ([]byte, error) {
+	sorted := p.sortMapKeys(v)
+	return json.Marshal(sorted)
+}
+
+func (p *certificateHashProcessor) sortMapKeys(v interface{}) interface{} {
+	switch val := v.(type) {
+	case map[string]interface{}:
+		sorted := make(map[string]interface{})
+		keys := make([]string, 0, len(val))
+		for k := range val {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			sorted[k] = p.sortMapKeys(val[k])
+		}
+		return sorted
+	case []interface{}:
+		sorted := make([]interface{}, len(val))
+		for i, item := range val {
+			sorted[i] = p.sortMapKeys(item)
+		}
+		return sorted
+	default:
+		return val
+	}
 }
 
 func (p *certificateHashProcessor) valueToInterface(v pcommon.Value) interface{} {
