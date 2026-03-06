@@ -1,0 +1,11 @@
+{
+    "severity_number":  9,
+    "timestamp":  1772709152367000000,
+    "body":  "Test log message from PowerShell",
+    "attributes":  {
+                       "test.attribute":  "test-value",
+                       "otel.log.hash":  "k5+tWJ2OAQyUfck+iSY6Lt7wqmxRA4j9jqMOBy3Ysos=",
+                       "otel.log.signature":  "L/GdpgM9Dz5JOVANj3MTiTzVgYN8KbU8jSWlIxa1BJ0MYXbipmTzGHxU2fhFD8wgtX25Lgt8NKw0yiEU1hcOEpXFF3nyB16A1ZPb/eD0skrDSceI5XOEpA8eJt6VPnhMARBFbekBofhBFsZaQGZjtnUofVUYEkUeXFiVasIWO3TIZb9+pNyh61vZA4t8n8o0bZ/HpO1MvnQ4bRpLQT1J6daud9DH3k+8G8v8vw9xzUy2VT81ZBCZaLix02U+B7g2Wl8POObT3W7+Na9E0PNGpSnA40L+1Ox1e1qY3Otn2cCBLiOdnjnVUFlTYpR9w6d0SQNgnwJ8IoxqTFVaXcTDtw=="
+                   },
+    "severity_text":  "INFO"
+}
