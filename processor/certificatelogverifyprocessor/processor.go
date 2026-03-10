@@ -7,12 +7,13 @@ import (
 	"context"
 	"crypto"
 	"crypto/rsa"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"hash"
 	"sort"
 	"strings"
+	"time"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
@@ -33,11 +34,13 @@ type certificateHashProcessor struct {
 	logger   *zap.Logger
 	nextLogs consumer.Logs
 	reader   *CertificateReader
-	hashFunc func() hash.Hash
+	hashAlgo crypto.Hash
 }
 
 func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settings) (*certificateHashProcessor, error) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	settings.Logger.Info("Initializing certificate reader from Kubernetes secret for verification",
 		zap.String("secret", cfg.K8sSecret.Name),
 		zap.String("namespace", cfg.K8sSecret.Namespace),
@@ -46,7 +49,7 @@ func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settin
 	reader, err := NewCertificateReaderFromK8sSecretForVerification(ctx, cfg.K8sSecret, settings.Logger)
 	if err != nil {
 		settings.Logger.Error("Failed to initialize certificate reader from k8s secret",
-			zap.String("error", err.Error()),
+			zap.Error(err),
 			zap.String("secret", cfg.K8sSecret.Name),
 			zap.String("namespace", cfg.K8sSecret.Namespace),
 		)
@@ -57,17 +60,8 @@ func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settin
 		zap.String("namespace", cfg.K8sSecret.Namespace),
 	)
 
-	var hashFunc func() hash.Hash
-	switch cfg.GetHash() {
-	case crypto.SHA256:
-		hashFunc = func() hash.Hash {
-			return crypto.SHA256.New()
-		}
-	case crypto.SHA512:
-		hashFunc = func() hash.Hash {
-			return crypto.SHA512.New()
-		}
-	default:
+	hashAlgo := cfg.GetHash()
+	if hashAlgo != crypto.SHA256 && hashAlgo != crypto.SHA512 {
 		return nil, fmt.Errorf("unsupported hash algorithm")
 	}
 
@@ -76,7 +70,7 @@ func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settin
 		logger:   settings.Logger,
 		nextLogs: nextLogs,
 		reader:   reader,
-		hashFunc: hashFunc,
+		hashAlgo: hashAlgo,
 	}, nil
 }
 
@@ -118,13 +112,10 @@ func (p *certificateHashProcessor) verifyLogRecord(lr plog.LogRecord) error {
 		return fmt.Errorf("missing required attribute: %s", signatureAttributeKey)
 	}
 
-	var signContent string
 	signContentAttr, signContentExists := lr.Attributes().Get(signContentAttributeKey)
-	if signContentExists {
+	var signContent string
+	if signContentExists && signContentAttr.Str() != "" {
 		signContent = signContentAttr.Str()
-		if signContent != SignContentBody && signContent != SignContentMeta && signContent != SignContentAttr {
-			return fmt.Errorf("invalid sign_content value in log attribute: %s (must be body, meta, or attr)", signContent)
-		}
 	} else {
 		signContent = p.config.SignContent
 		if signContent == "" {
@@ -134,6 +125,13 @@ func (p *certificateHashProcessor) verifyLogRecord(lr plog.LogRecord) error {
 
 	receivedHashBase64 := hashAttr.Str()
 	receivedSignatureBase64 := signatureAttr.Str()
+
+	if receivedHashBase64 == "" {
+		return fmt.Errorf("hash attribute is empty")
+	}
+	if receivedSignatureBase64 == "" {
+		return fmt.Errorf("signature attribute is empty")
+	}
 
 	receivedHash, err := base64.StdEncoding.DecodeString(receivedHashBase64)
 	if err != nil {
@@ -150,28 +148,47 @@ func (p *certificateHashProcessor) verifyLogRecord(lr plog.LogRecord) error {
 		return fmt.Errorf("failed to serialize log record: %w", err)
 	}
 
-	h := p.hashFunc()
+	if len(logData) == 0 {
+		return fmt.Errorf("serialized log data is empty (sign_content: %s)", signContent)
+	}
+
+	h := p.hashAlgo.New()
 	if _, err := h.Write(logData); err != nil {
 		return fmt.Errorf("failed to compute hash: %w", err)
 	}
 	computedHash := h.Sum(nil)
 
 	if !equalHashes(computedHash, receivedHash) {
-		return fmt.Errorf("hash mismatch: computed %x, received %x", computedHash, receivedHash)
+		p.logger.Info("Hash mismatch detected",
+			zap.String("algorithm", p.config.HashAlgorithm),
+			zap.String("sign_content", signContent),
+			zap.String("computed_hash", fmt.Sprintf("%x", computedHash)),
+			zap.String("received_hash", fmt.Sprintf("%x", receivedHash)),
+		)
+		return fmt.Errorf("hash mismatch (algorithm: %s, sign_content: %s): computed %x, received %x",
+			p.config.HashAlgorithm, signContent, computedHash, receivedHash)
+	}
+
+	if p.reader == nil {
+		return fmt.Errorf("certificate reader is nil")
 	}
 
 	cert := p.reader.GetCertificate()
+	if cert == nil {
+		return fmt.Errorf("certificate is nil")
+	}
+
 	publicKey, ok := cert.PublicKey.(*rsa.PublicKey)
 	if !ok {
 		return fmt.Errorf("certificate public key is not RSA")
 	}
 
-	err = rsa.VerifyPKCS1v15(publicKey, p.config.GetHash(), computedHash, receivedSignature)
+	err = rsa.VerifyPKCS1v15(publicKey, p.hashAlgo, computedHash, receivedSignature)
 	if err != nil {
-		return fmt.Errorf("signature verification failed: %w", err)
+		return fmt.Errorf("signature verification failed (algorithm: %s): %w", p.config.HashAlgorithm, err)
 	}
 
-	p.logger.Debug("Log record verification successful",
+	p.logger.Info("Log record verification successful",
 		zap.String("sign_content", signContent),
 	)
 
@@ -283,15 +300,7 @@ func (p *certificateHashProcessor) valueToInterface(v pcommon.Value) interface{}
 }
 
 func equalHashes(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return len(a) == len(b) && subtle.ConstantTimeCompare(a, b) == 1
 }
 
 func (p *certificateHashProcessor) Start(_ context.Context, _ component.Host) error {
