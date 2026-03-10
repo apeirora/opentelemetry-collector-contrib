@@ -46,7 +46,7 @@ func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settin
 	reader, err := NewCertificateReaderFromK8sSecretForVerification(ctx, cfg.K8sSecret, settings.Logger)
 	if err != nil {
 		settings.Logger.Error("Failed to initialize certificate reader from k8s secret",
-			zap.Error(err),
+			zap.String("error", err.Error()),
 			zap.String("secret", cfg.K8sSecret.Name),
 			zap.String("namespace", cfg.K8sSecret.Namespace),
 		)
@@ -86,20 +86,22 @@ func (p *certificateHashProcessor) Capabilities() consumer.Capabilities {
 
 func (p *certificateHashProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error {
 	resourceLogs := ld.ResourceLogs()
-	for i := 0; i < resourceLogs.Len(); i++ {
-		resourceLog := resourceLogs.At(i)
-		scopeLogs := resourceLog.ScopeLogs()
-		for j := 0; j < scopeLogs.Len(); j++ {
-			scopeLog := scopeLogs.At(j)
-			logRecords := scopeLog.LogRecords()
-			for k := 0; k < logRecords.Len(); k++ {
-				logRecord := logRecords.At(k)
-				if err := p.verifyLogRecord(logRecord); err != nil {
-					p.logger.Error("Failed to verify log record", zap.Error(err))
-					continue
+	resourceLogs.RemoveIf(func(rl plog.ResourceLogs) bool {
+		rl.ScopeLogs().RemoveIf(func(sl plog.ScopeLogs) bool {
+			sl.LogRecords().RemoveIf(func(lr plog.LogRecord) bool {
+				if err := p.verifyLogRecord(lr); err != nil {
+					p.logger.Error("Failed to verify log record", zap.String("error", err.Error()))
+					return true
 				}
-			}
-		}
+				return false
+			})
+			return sl.LogRecords().Len() == 0
+		})
+		return rl.ScopeLogs().Len() == 0
+	})
+
+	if ld.LogRecordCount() == 0 {
+		return nil
 	}
 
 	return p.nextLogs.ConsumeLogs(ctx, ld)
@@ -116,10 +118,13 @@ func (p *certificateHashProcessor) verifyLogRecord(lr plog.LogRecord) error {
 		return fmt.Errorf("missing required attribute: %s", signatureAttributeKey)
 	}
 
-	signContentAttr, signContentExists := lr.Attributes().Get(signContentAttributeKey)
 	var signContent string
+	signContentAttr, signContentExists := lr.Attributes().Get(signContentAttributeKey)
 	if signContentExists {
 		signContent = signContentAttr.Str()
+		if signContent != SignContentBody && signContent != SignContentMeta && signContent != SignContentAttr {
+			return fmt.Errorf("invalid sign_content value in log attribute: %s (must be body, meta, or attr)", signContent)
+		}
 	} else {
 		signContent = p.config.SignContent
 		if signContent == "" {
