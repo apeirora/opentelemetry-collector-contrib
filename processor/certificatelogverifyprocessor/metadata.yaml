@@ -1,0 +1,24 @@
+type: certificatelogverify
+
+status:
+  class: processor
+  stability:
+    alpha: [logs]
+  distributions: [contrib]
+  warnings: []
+  codeowners:
+    active: []
+
+tests:
+  config:
+
+telemetry:
+  metrics:
+    certificatelogverify_processor_processed_logs:
+      description: Number of log records verified with certificate signature.
+      stability:
+        level: development
+      unit: "{records}"
+      enabled: true
+      histogram:
+        value_type: int

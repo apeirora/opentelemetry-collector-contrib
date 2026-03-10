@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otelcol-certificatelogverify
+  namespace: otel-demo
+  labels:
+    app: otelcol-certificatelogverify
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: otelcol-certificatelogverify
+  template:
+    metadata:
+      labels:
+        app: otelcol-certificatelogverify
+    spec:
+      serviceAccountName: otelcol-certificatelogverify
+      containers:
+      - name: otelcol
+        image: certificatelogverify-collector:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 4317
+          name: otlp-grpc
+          protocol: TCP
+        - containerPort: 4318
+          name: otlp-http
+          protocol: TCP
+        - containerPort: 8888
+          name: metrics
+          protocol: TCP
+        volumeMounts:
+        - name: config
+          mountPath: /etc/otelcol
+          readOnly: true
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8888
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8888
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: otelcol-config
