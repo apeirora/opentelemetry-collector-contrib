@@ -7,9 +7,9 @@ Write-Host ""
 
 $scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Resolve-Path (Join-Path $scriptPath "..\..\..\")
-$imageName = "otelcol-certificatehash:latest"
-$dockerfilePath = "processor/signingprocessor/k8s/Dockerfile.certificatehash"
-$deploymentFile = "otelcol-certificatehash-k8s-secret.yaml"
+$imageName = "otelcol-signing:latest"
+$dockerfilePath = "processor/signingprocessor/k8s/Dockerfile.signing"
+$deploymentFile = "otelcol-signing-k8s-secret.yaml"
 
 Write-Host "Step 1: Building Docker image..." -ForegroundColor Yellow
 Write-Host "This will compile the collector with your latest code changes..." -ForegroundColor Gray
@@ -45,7 +45,7 @@ if ($clusterType -match "kind") {
 
 Write-Host ""
 Write-Host "Step 3: Deleting existing pods to force new image pull..." -ForegroundColor Yellow
-kubectl delete pod -n otel-demo -l app=otelcol-certificatehash --ignore-not-found=true | Out-Null
+kubectl delete pod -n otel-demo -l app=otelcol-signing --ignore-not-found=true | Out-Null
 Write-Host "Old pods deleted" -ForegroundColor Green
 
 Write-Host ""
@@ -65,7 +65,7 @@ Write-Host "Deployment applied successfully!" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "Step 5: Waiting for pod to be ready..." -ForegroundColor Yellow
-kubectl wait --for=condition=ready pod -n otel-demo -l app=otelcol-certificatehash --timeout=60s
+kubectl wait --for=condition=ready pod -n otel-demo -l app=otelcol-signing --timeout=60s
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "Pod is ready!" -ForegroundColor Green
@@ -75,12 +75,12 @@ if ($LASTEXITCODE -eq 0) {
 
 Write-Host ""
 Write-Host "Step 6: Checking pod status..." -ForegroundColor Yellow
-kubectl get pods -n otel-demo -l app=otelcol-certificatehash
+kubectl get pods -n otel-demo -l app=otelcol-signing
 
 Write-Host ""
 Write-Host "Step 7: Checking logs for initialization..." -ForegroundColor Yellow
 Start-Sleep -Seconds 2
-$logs = kubectl logs -n otel-demo -l app=otelcol-certificatehash --tail=10 2>&1
+$logs = kubectl logs -n otel-demo -l app=otelcol-signing --tail=10 2>&1
 if ($logs -match "Using Kubernetes secret|Everything is ready") {
     Write-Host "SUCCESS: Collector is running with K8s secret!" -ForegroundColor Green
 } else {
@@ -94,7 +94,7 @@ Write-Host "Deployment Complete!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "To view logs:" -ForegroundColor Yellow
-Write-Host "  kubectl logs -n otel-demo -l app=otelcol-certificatehash -f" -ForegroundColor White
+Write-Host "  kubectl logs -n otel-demo -l app=otelcol-signing -f" -ForegroundColor White
 Write-Host ""
 Write-Host "To test:" -ForegroundColor Yellow
 Write-Host "  .\test-k8s-secret-processor.ps1" -ForegroundColor White
