@@ -8,7 +8,7 @@ Write-Host ""
 $scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Resolve-Path (Join-Path $scriptPath "..\..\..\")
 $imageName = "otelcol-certificatehash:latest"
-$dockerfilePath = "processor/certificatehashprocessor/k8s/Dockerfile.certificatehash"
+$dockerfilePath = "processor/signingprocessor/k8s/Dockerfile.certificatehash"
 $deploymentFile = "otelcol-certificatehash-k8s-secret.yaml"
 
 Write-Host "Step 1: Building Docker image..." -ForegroundColor Yellow

@@ -1,10 +1,10 @@
-type: certificatehash
+type: signing
 
 status:
   class: processor
   stability:
-    alpha: [logs]
-  distributions: [contrib]
+    alpha: [ logs ]
+  distributions: [ contrib ]
   warnings: []
   codeowners:
     active: []
@@ -12,10 +12,11 @@ status:
 tests:
   config:
 
+
 telemetry:
   metrics:
-    certificatehash_processor_processed_logs:
-      description: Number of log records processed with hash and signature.
+    signing_processor_processed_logs:
+      description: Number of signed log records.
       stability:
         level: development
       unit: "{records}"

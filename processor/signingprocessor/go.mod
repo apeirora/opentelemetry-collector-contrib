@@ -1,4 +1,4 @@
-module github.com/open-telemetry/opentelemetry-collector-contrib/processor/certificatehashprocessor
+module github.com/open-telemetry/opentelemetry-collector-contrib/processor/signingprocessor
 
 go 1.24.0
 

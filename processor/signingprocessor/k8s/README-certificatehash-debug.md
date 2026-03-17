@@ -5,6 +5,7 @@ This guide explains how to deploy the certificate hash processor with a debug ex
 ## Overview
 
 The certificate hash processor adds cryptographic integrity verification to log records by:
+
 - Computing a hash (SHA-256 or SHA-512) of each log record
 - Signing the hash with an RSA private key
 - Adding `otel.certificate.hash` and `otel.certificate.signature` attributes
@@ -23,10 +24,11 @@ The standard OpenTelemetry Collector image doesn't include custom processors. Bu
 **Important:** Run this command from the repository root directory
 
 ```bash
-docker build -f processor/certificatehashprocessor/k8s/Dockerfile.certificatehash -t otelcol-certificatehash:latest .
+docker build -f processor/signingprocessor/k8s/Dockerfile -t otelcol-certificatehash:latest .
 ```
 
 For kind clusters:
+
 ```bash
 kind load docker-image otelcol-certificatehash:latest --name otel-demo
 ```
@@ -51,7 +53,7 @@ kubectl create secret generic otelcol-test-certs `
 ## Step 4: Deploy Collector
 
 ```bash
-kubectl apply -f processor/certificatehashprocessor/k8s/otelcol-certificatehash-debug.yaml
+kubectl apply -f processor/signingprocessor/k8s/otelcol-certificatehash-debug.yaml
 ```
 
 ## Step 5: Restart Deployment
@@ -72,11 +74,13 @@ kubectl logs -n otel-demo -l app=otelcol-certificatehash
 ## Step 7: Test the Processor
 
 Use the test script:
+
 ```powershell
-.\processor\certificatehashprocessor\k8s\test-send-log.ps1
+.\processor\signingprocessor\k8s\test-send-log.ps1
 ```
 
 Or manually port-forward and send logs:
+
 ```bash
 kubectl port-forward -n otel-demo service/otelcol-certificatehash 4318:4318
 ```
@@ -99,6 +103,7 @@ processors:
 ## Expected Output
 
 When logs are processed, you should see in the collector logs (debug exporter output) that each log record has:
+
 - `otel.certificate.hash` - Base64-encoded hash
 - `otel.certificate.signature` - Base64-encoded RSA signature
 
