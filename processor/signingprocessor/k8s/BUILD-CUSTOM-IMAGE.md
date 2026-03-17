@@ -11,16 +11,18 @@ The certificate hash processor is a custom component and must be included in a c
 
 1. **Ensure the processor is in builder-config.yaml:**
    The processor should be listed in `cmd/otelcontribcol/builder-config.yaml`:
+
    ```yaml
    processors:
-     - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/certificatehashprocessor v0.145.0
+     - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/signingprocessor v0.145.0
    ```
 
 2. **Build the Docker image:**
-   
+
    **Important:** Run this command from the repository root directory:
+
    ```bash
-   docker build -f processor/certificatehashprocessor/k8s/Dockerfile.certificatehash -t otelcol-certificatehash:latest .
+   docker build -f processor/signingprocessor/k8s/Dockerfile -t otelcol-certificatehash:latest .
    ```
 
    The Dockerfile:
@@ -30,24 +32,27 @@ The certificate hash processor is a custom component and must be included in a c
    - Creates a minimal alpine image with the collector binary
 
 3. **Load the image into your Kubernetes cluster:**
-   
+
    **For kind clusters:**
+
    ```bash
    kind load docker-image otelcol-certificatehash:latest --name otel-demo
    ```
-   
+
    Note: If your cluster has a different name, replace `otel-demo` with your cluster name. Check cluster names with `kind get clusters`.
-   
+
    **For minikube clusters:**
+
    ```bash
    minikube image load otelcol-certificatehash:latest
    ```
-   
+
    **For other local clusters:**
    - Ensure `imagePullPolicy: Never` is set in your deployment YAML
    - The image should be available if Docker is shared with the cluster
 
 4. **Verify the image:**
+
    ```bash
    docker images | grep otelcol-certificatehash
    ```
