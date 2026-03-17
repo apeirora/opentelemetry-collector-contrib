@@ -160,21 +160,21 @@ func main() {
 			fmt.Printf("\n=== Verifying Log Record %d ===\n", i+1)
 		}
 
-		hashValue, ok := record.Attributes["otel.log.hash"].(string)
+		hashValue, ok := record.Attributes["otel.log.record.hash"].(string)
 		if !ok {
-			fmt.Fprintf(os.Stderr, "Error: Log record %d missing otel.log.hash attribute\n", i+1)
+			fmt.Fprintf(os.Stderr, "Error: Log record %d missing otel.log.record.hash attribute\n", i+1)
 			allValid = false
 			continue
 		}
 
-		signatureValue, ok := record.Attributes["otel.log.signature"].(string)
+		signatureValue, ok := record.Attributes["otel.log.record.signature"].(string)
 		if !ok {
-			fmt.Fprintf(os.Stderr, "Error: Log record %d missing otel.log.signature attribute\n", i+1)
+			fmt.Fprintf(os.Stderr, "Error: Log record %d missing otel.log.record.signature attribute\n", i+1)
 			allValid = false
 			continue
 		}
 
-		signContent, _ := record.Attributes["otel.log.sign_content"].(string)
+		signContent, _ := record.Attributes["otel.log.record.sign_content"].(string)
 		if signContent == "" {
 			signContent = "body"
 		}

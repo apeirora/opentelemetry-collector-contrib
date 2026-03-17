@@ -1,14 +1,14 @@
-# Certificate Hash Processor - Deployment Guide
+# Signing Processor - Deployment Guide
 
-This guide explains how to deploy the certificate hash processor with a debug exporter to a Kubernetes cluster.
+This guide explains how to deploy the signing processor with a debug exporter to a Kubernetes cluster.
 
 ## Overview
 
-The certificate hash processor adds cryptographic integrity verification to log records by:
+The signing processor adds cryptographic integrity verification to log records by:
 
 - Computing a hash (SHA-256 or SHA-512) of each log record
 - Signing the hash with an RSA private key
-- Adding `otel.certificate.hash` and `otel.certificate.signature` attributes
+- Adding `otel.log.record.hash` and `otel.log.record.signature` attributes
 
 ## Prerequisites
 
@@ -24,13 +24,13 @@ The standard OpenTelemetry Collector image doesn't include custom processors. Bu
 **Important:** Run this command from the repository root directory
 
 ```bash
-docker build -f processor/signingprocessor/k8s/Dockerfile -t otelcol-certificatehash:latest .
+docker build -f processor/signingprocessor/k8s/Dockerfile -t otelcol-signing:latest .
 ```
 
 For kind clusters:
 
 ```bash
-kind load docker-image otelcol-certificatehash:latest --name otel-demo
+kind load docker-image otelcol-signing:latest --name otel-demo
 ```
 
 See `BUILD-CUSTOM-IMAGE.md` for detailed instructions.
@@ -53,7 +53,7 @@ kubectl create secret generic otelcol-test-certs `
 ## Step 4: Deploy Collector
 
 ```bash
-kubectl apply -f processor/signingprocessor/k8s/otelcol-certificatehash-debug.yaml
+kubectl apply -f processor/signingprocessor/k8s/otelcol-signing-debug.yaml
 ```
 
 ## Step 5: Restart Deployment
@@ -61,14 +61,14 @@ kubectl apply -f processor/signingprocessor/k8s/otelcol-certificatehash-debug.ya
 Restart the deployment to ensure pods pick up any configuration changes:
 
 ```bash
-kubectl rollout restart deployment/otelcol-certificatehash -n otel-demo
+kubectl rollout restart deployment/otelcol-signing -n otel-demo
 ```
 
 ## Step 6: Verify Deployment
 
 ```bash
 kubectl get pods -n otel-demo
-kubectl logs -n otel-demo -l app=otelcol-certificatehash
+kubectl logs -n otel-demo -l app=otelcol-signing
 ```
 
 ## Step 7: Test the Processor
@@ -82,7 +82,7 @@ Use the test script:
 Or manually port-forward and send logs:
 
 ```bash
-kubectl port-forward -n otel-demo service/otelcol-certificatehash 4318:4318
+kubectl port-forward -n otel-demo service/otelcol-signing 4318:4318
 ```
 
 Then send a test log using curl or the test script.
@@ -93,7 +93,7 @@ The processor configuration in the ConfigMap:
 
 ```yaml
 processors:
-  certificatehash:
+  signing:
     hash_algorithm: SHA256  # or SHA512
     cert_path: /etc/certs/cert.pem
     key_path: /etc/certs/key.pem
@@ -104,8 +104,8 @@ processors:
 
 When logs are processed, you should see in the collector logs (debug exporter output) that each log record has:
 
-- `otel.certificate.hash` - Base64-encoded hash
-- `otel.certificate.signature` - Base64-encoded RSA signature
+- `otel.log.record.hash` - Base64-encoded hash
+- `otel.log.record.signature` - Base64-encoded RSA signature
 
 ## Troubleshooting
 

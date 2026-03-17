@@ -1,11 +1,12 @@
 # Verify Signed Log Script
 
-This script verifies the integrity and authenticity of log records that have been processed by the certificate hash processor.
+This script verifies the integrity and authenticity of log records that have been processed by the signing processor.
 
 ## Overview
 
 The verification script:
-1. Extracts the `otel.certificate.hash` and `otel.certificate.signature` attributes from log records
+
+1. Extracts the `otel.log.record.hash` and `otel.log.record.signature` attributes from log records
 2. Reconstructs the original log record (without hash/signature attributes)
 3. Serializes it the same way the processor does
 4. Computes the hash and compares it with the provided hash
@@ -80,6 +81,7 @@ cat log.json | .\verify-signed-log.exe -log - -cert cert.pem
 The script accepts log files in two formats:
 
 ### OTLP Format (from collector debug exporter)
+
 ```json
 {
   "resourceLogs": [
@@ -90,8 +92,8 @@ The script accepts log files in two formats:
             {
               "body": "Test log message",
               "attributes": {
-                "otel.certificate.hash": "base64-encoded-hash",
-                "otel.certificate.signature": "base64-encoded-signature",
+                "otel.log.record.hash": "base64-encoded-hash",
+                "otel.log.record.signature": "base64-encoded-signature",
                 "other.attribute": "value"
               },
               "timestamp": 1234567890000000000,
@@ -107,12 +109,13 @@ The script accepts log files in two formats:
 ```
 
 ### Single Log Record Format
+
 ```json
 {
   "body": "Test log message",
   "attributes": {
-    "otel.certificate.hash": "base64-encoded-hash",
-    "otel.certificate.signature": "base64-encoded-signature",
+    "otel.log.record.hash": "base64-encoded-hash",
+    "otel.log.record.signature": "base64-encoded-signature",
     "other.attribute": "value"
   },
   "timestamp": 1234567890000000000,
@@ -124,11 +127,13 @@ The script accepts log files in two formats:
 ## Output
 
 The script will output:
+
 - ✅ Success message for each verified log record
 - ❌ Error messages for failed verifications
 - Detailed information when using `-verbose` flag
 
 Example output:
+
 ```
 ✅ Log record 1: Hash and signature verified successfully
 ✅ Log record 2: Hash and signature verified successfully
@@ -138,23 +143,26 @@ Example output:
 
 ## How It Works
 
-1. **Hash Verification**: The script reconstructs the log record exactly as it was when hashed by the processor (excluding the hash and signature attributes), serializes it to JSON, and computes the hash using the same algorithm (SHA256 or SHA512). It then compares this computed hash with the `otel.certificate.hash` attribute.
+1. **Hash Verification**: The script reconstructs the log record exactly as it was when hashed by the processor (excluding the hash and signature attributes), serializes it to JSON, and computes the hash using the same algorithm (SHA256 or SHA512). It then compares this computed hash with the `otel.log.record.hash` attribute.
 
-2. **Signature Verification**: The script decodes the base64-encoded signature from `otel.certificate.signature`, then uses RSA PKCS1v15 verification with the public key from the certificate to verify that the signature was created by the holder of the corresponding private key.
+2. **Signature Verification**: The script decodes the base64-encoded signature from `otel.log.record.signature`, then uses RSA PKCS1v15 verification with the public key from the certificate to verify that the signature was created by the holder of the corresponding private key.
 
 ## Troubleshooting
 
 ### Hash Mismatch
+
 - Ensure the hash algorithm matches what was used by the processor (default is SHA256)
 - Check that the log record hasn't been modified after signing
 - Verify that the serialization format matches (the script uses the same logic as the processor)
 
 ### Signature Verification Failed
+
 - Ensure you're using the correct certificate (the one matching the private key used for signing)
 - Check that the certificate file is in PEM format
 - Verify the certificate contains an RSA public key
 
 ### Certificate Errors
+
 - Ensure the certificate file path is correct
 - Check that the certificate is in PEM format (starts with `-----BEGIN CERTIFICATE-----`)
 - Verify the certificate hasn't been corrupted
@@ -168,7 +176,7 @@ To verify logs from the collector's debug exporter:
 .\extract-cert-from-k8s.ps1 -CertOnly
 
 # Step 2: Get logs from collector
-kubectl logs -n otel-demo -l app=otelcol-certificatehash --tail=100 > collector-logs.txt
+kubectl logs -n otel-demo -l app=otelcol-signing --tail=100 > collector-logs.txt
 
 # Step 3: Extract JSON log records (you may need to parse the collector output)
 # Then verify with the script

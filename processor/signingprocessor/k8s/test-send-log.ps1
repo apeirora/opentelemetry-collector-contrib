@@ -1,7 +1,7 @@
 $ErrorActionPreference = "Stop"
 
 $namespace = "otel-demo"
-$serviceName = "otelcol-certificatehash"
+$serviceName = "otelcol-signing"
 $endpoint = "http://localhost:4318/v1/logs"
 
 Write-Host "Port-forwarding to $serviceName..." -ForegroundColor Cyan

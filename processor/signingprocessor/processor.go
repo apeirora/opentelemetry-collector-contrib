@@ -103,9 +103,9 @@ func (p *signingProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error 
 
 // processLogRecord processes a single log record by computing its hash and signing it.
 // It adds three attributes to the log record:
-//   - otel.log.hash: base64-encoded hash of the serialized log content
-//   - otel.log.signature: base64-encoded RSA signature of the hash
-//   - otel.log.sign_content: indicates what content was signed (body/meta/attr)
+//   - otel.log.record.hash: base64-encoded hash of the serialized log content
+//   - otel.log.record.signature: base64-encoded RSA signature of the hash
+//   - otel.log.record.sign_content: indicates what content was signed (body/meta/attr)
 func (p *signingProcessor) processLogRecord(lr plog.LogRecord) error {
 	logData, err := p.serializeLogRecord(lr)
 	if err != nil {
@@ -126,16 +126,16 @@ func (p *signingProcessor) processLogRecord(lr plog.LogRecord) error {
 	}
 	signatureBase64 := base64.StdEncoding.EncodeToString(signature)
 
-	lr.Attributes().PutStr("otel.log.hash", hashBase64)
-	lr.Attributes().PutStr("otel.log.signature", signatureBase64)
-	lr.Attributes().PutStr("otel.log.sign_content", p.config.SignContent)
+	lr.Attributes().PutStr("otel.log.record.hash", hashBase64)
+	lr.Attributes().PutStr("otel.log.record.signature", signatureBase64)
+	lr.Attributes().PutStr("otel.log.record.sign_content", p.config.SignContent)
 
 	return nil
 }
 
 // serializeLogRecord serializes the log record to JSON bytes based on the configured sign_content setting.
 // Returns the JSON-encoded bytes representing the log record content that will be hashed and signed.
-// The content included depends on sign_content: body (body only), meta (body + metadata), or attr (body + metadata + attributes).
+// The content included depends on sign_content: body (body only), meta (body + metadata), or attr (body + metadata + attributes not starting with "otel.log.").
 func (p *signingProcessor) serializeLogRecord(lr plog.LogRecord) ([]byte, error) {
 	data := make(map[string]interface{})
 
