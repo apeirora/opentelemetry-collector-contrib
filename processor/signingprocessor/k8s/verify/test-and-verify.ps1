@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory=$false)]
     [string]$Namespace = "otel-demo",
     [Parameter(Mandatory=$false)]
-    [string]$ServiceName = "otelcol-certificatehash",
+    [string]$ServiceName = "otelcol-signing",
     [Parameter(Mandatory=$false)]
     [string]$OutputFile = "log-from-collector.json"
 )
@@ -178,15 +178,15 @@ try {
                     $key = $matches[1].Trim()
                     $value = $matches[2]
                     
-                    if ($key -eq 'otel.log.hash') {
-                        $logRecord.attributes['otel.log.hash'] = $value
+                    if ($key -eq 'otel.log.record.hash') {
+                        $logRecord.attributes['otel.log.record.hash'] = $value
                         $foundHash = $true
                     }
-                    elseif ($key -eq 'otel.log.signature') {
-                        $logRecord.attributes['otel.log.signature'] = $value
+                    elseif ($key -eq 'otel.log.record.signature') {
+                        $logRecord.attributes['otel.log.record.signature'] = $value
                         $foundSignature = $true
                     }
-                    elseif ($key -ne 'otel.log.hash' -and $key -ne 'otel.log.signature') {
+                    elseif ($key -ne 'otel.log.record.hash' -and $key -ne 'otel.log.record.signature') {
                         $logRecord.attributes[$key] = $value
                     }
                 }
@@ -204,15 +204,15 @@ try {
             }
         }
         
-        if ($logRecord.attributes.ContainsKey('otel.log.hash') -and 
-            $logRecord.attributes.ContainsKey('otel.log.signature') -and
+        if ($logRecord.attributes.ContainsKey('otel.log.record.hash') -and 
+            $logRecord.attributes.ContainsKey('otel.log.record.signature') -and
             $logRecord.body -eq "Test log message from PowerShell") {
             # Convert to JSON
             $foundLogJson = $logRecord | ConvertTo-Json -Depth 10
             Write-Host "  [OK] Successfully parsed log record from debug exporter format" -ForegroundColor Green
             Write-Host "  [DEBUG] Body: $($logRecord.body)" -ForegroundColor Gray
             Write-Host "  [DEBUG] Timestamp: $($logRecord.timestamp)" -ForegroundColor Gray
-            Write-Host "  [DEBUG] Hash: $($logRecord.attributes['otel.log.hash'].Substring(0, 20))..." -ForegroundColor Gray
+            Write-Host "  [DEBUG] Hash: $($logRecord.attributes['otel.log.record.hash'].Substring(0, 20))..." -ForegroundColor Gray
         } else {
             Write-Host "  [DEBUG] Missing fields - Body: $($logRecord.body), Hash: $foundHash, Sig: $foundSignature, TS: $($logRecord.timestamp)" -ForegroundColor Yellow
         }

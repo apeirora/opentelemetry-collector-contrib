@@ -1,6 +1,6 @@
 # Building Custom OpenTelemetry Collector Image
 
-The certificate hash processor is a custom component and must be included in a custom collector build.
+The signing processor is a custom component and must be included in a custom collector build.
 
 ## Prerequisites
 
@@ -14,7 +14,7 @@ The certificate hash processor is a custom component and must be included in a c
 
    ```yaml
    processors:
-     - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/signingprocessor v0.145.0
+     - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/signingprocessor v0.147.0
    ```
 
 2. **Build the Docker image:**
@@ -22,7 +22,7 @@ The certificate hash processor is a custom component and must be included in a c
    **Important:** Run this command from the repository root directory:
 
    ```bash
-   docker build -f processor/signingprocessor/k8s/Dockerfile -t otelcol-certificatehash:latest .
+   docker build -f processor/signingprocessor/k8s/Dockerfile -t otelcol-signing:latest .
    ```
 
    The Dockerfile:
@@ -36,7 +36,7 @@ The certificate hash processor is a custom component and must be included in a c
    **For kind clusters:**
 
    ```bash
-   kind load docker-image otelcol-certificatehash:latest --name otel-demo
+   kind load docker-image otelcol-signing:latest --name otel-demo
    ```
 
    Note: If your cluster has a different name, replace `otel-demo` with your cluster name. Check cluster names with `kind get clusters`.
@@ -44,7 +44,7 @@ The certificate hash processor is a custom component and must be included in a c
    **For minikube clusters:**
 
    ```bash
-   minikube image load otelcol-certificatehash:latest
+   minikube image load otelcol-signing:latest
    ```
 
    **For other local clusters:**
@@ -54,16 +54,16 @@ The certificate hash processor is a custom component and must be included in a c
 4. **Verify the image:**
 
    ```bash
-   docker images | grep otelcol-certificatehash
+   docker images | grep otelcol-signing
    ```
 
 ## Troubleshooting
 
-- **Build fails with "unknown type certificatehash":**
+- **Build fails with "unknown type signing":**
   - Ensure the processor is added to `builder-config.yaml`
   - Run `make genotelcontribcol` manually to regenerate code
 
 - **Image not found in cluster:**
-  - For kind: Use `kind load docker-image otelcol-certificatehash:latest --name <cluster-name>`
-  - For minikube: Use `minikube image load otelcol-certificatehash:latest`
+  - For kind: Use `kind load docker-image otelcol-signing:latest --name <cluster-name>`
+  - For minikube: Use `minikube image load otelcol-signing:latest`
   - For other clusters: Push to a registry or use `imagePullPolicy: Never`
