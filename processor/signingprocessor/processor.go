@@ -1,7 +1,7 @@
 // Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
-package certificatehashprocessor // import "github.com/open-telemetry/opentelemetry-collector-contrib/processor/certificatehashprocessor"
+package signingprocessor // import "github.com/open-telemetry/opentelemetry-collector-contrib/processor/signingprocessor"
 
 import (
 	"context"
@@ -23,7 +23,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type certificateHashProcessor struct {
+type signingProcessor struct {
 	config   *Config
 	logger   *zap.Logger
 	nextLogs consumer.Logs
@@ -31,7 +31,7 @@ type certificateHashProcessor struct {
 	hashFunc func() hash.Hash
 }
 
-func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settings) (*certificateHashProcessor, error) {
+func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settings) (*signingProcessor, error) {
 	ctx := context.Background()
 	settings.Logger.Info("Initializing certificate reader from Kubernetes secret",
 		zap.String("secret", cfg.K8sSecret.Name),
@@ -67,7 +67,7 @@ func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settin
 		return nil, fmt.Errorf("unsupported hash algorithm")
 	}
 
-	return &certificateHashProcessor{
+	return &signingProcessor{
 		config:   cfg,
 		logger:   settings.Logger,
 		nextLogs: nextLogs,
@@ -76,11 +76,11 @@ func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settin
 	}, nil
 }
 
-func (p *certificateHashProcessor) Capabilities() consumer.Capabilities {
+func (p *signingProcessor) Capabilities() consumer.Capabilities {
 	return consumer.Capabilities{MutatesData: true}
 }
 
-func (p *certificateHashProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error {
+func (p *signingProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error {
 	resourceLogs := ld.ResourceLogs()
 	for i := 0; i < resourceLogs.Len(); i++ {
 		resourceLog := resourceLogs.At(i)
@@ -106,7 +106,7 @@ func (p *certificateHashProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs
 //   - otel.log.hash: base64-encoded hash of the serialized log content
 //   - otel.log.signature: base64-encoded RSA signature of the hash
 //   - otel.log.sign_content: indicates what content was signed (body/meta/attr)
-func (p *certificateHashProcessor) processLogRecord(lr plog.LogRecord) error {
+func (p *signingProcessor) processLogRecord(lr plog.LogRecord) error {
 	logData, err := p.serializeLogRecord(lr)
 	if err != nil {
 		return fmt.Errorf("failed to serialize log record: %w", err)
@@ -136,7 +136,7 @@ func (p *certificateHashProcessor) processLogRecord(lr plog.LogRecord) error {
 // serializeLogRecord serializes the log record to JSON bytes based on the configured sign_content setting.
 // Returns the JSON-encoded bytes representing the log record content that will be hashed and signed.
 // The content included depends on sign_content: body (body only), meta (body + metadata), or attr (body + metadata + attributes).
-func (p *certificateHashProcessor) serializeLogRecord(lr plog.LogRecord) ([]byte, error) {
+func (p *signingProcessor) serializeLogRecord(lr plog.LogRecord) ([]byte, error) {
 	data := make(map[string]interface{})
 
 	signContent := p.config.SignContent
@@ -186,12 +186,12 @@ func (p *certificateHashProcessor) serializeLogRecord(lr plog.LogRecord) ([]byte
 	return p.marshalJSONDeterministic(data)
 }
 
-func (p *certificateHashProcessor) marshalJSONDeterministic(v interface{}) ([]byte, error) {
+func (p *signingProcessor) marshalJSONDeterministic(v interface{}) ([]byte, error) {
 	sorted := p.sortMapKeys(v)
 	return json.Marshal(sorted)
 }
 
-func (p *certificateHashProcessor) sortMapKeys(v interface{}) interface{} {
+func (p *signingProcessor) sortMapKeys(v interface{}) interface{} {
 	switch val := v.(type) {
 	case map[string]interface{}:
 		sorted := make(map[string]interface{})
@@ -215,7 +215,7 @@ func (p *certificateHashProcessor) sortMapKeys(v interface{}) interface{} {
 	}
 }
 
-func (p *certificateHashProcessor) valueToInterface(v pcommon.Value) interface{} {
+func (p *signingProcessor) valueToInterface(v pcommon.Value) interface{} {
 	switch v.Type() {
 	case pcommon.ValueTypeStr:
 		return v.Str()
@@ -245,10 +245,10 @@ func (p *certificateHashProcessor) valueToInterface(v pcommon.Value) interface{}
 	}
 }
 
-func (p *certificateHashProcessor) Start(_ context.Context, _ component.Host) error {
+func (p *signingProcessor) Start(_ context.Context, _ component.Host) error {
 	return nil
 }
 
-func (p *certificateHashProcessor) Shutdown(_ context.Context) error {
+func (p *signingProcessor) Shutdown(_ context.Context) error {
 	return nil
 }

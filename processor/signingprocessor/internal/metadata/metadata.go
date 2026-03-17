@@ -1,7 +1,7 @@
 // Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// Package metadata contains the component.Type and stability metadata for the certificatehash processor.
+// Package metadata contains the component.Type and stability metadata for the signing processor.
 package metadata
 
 import (
@@ -9,7 +9,7 @@ import (
 )
 
 var (
-	Type = component.MustNewType("certificatehash")
+	Type = component.MustNewType("signing")
 )
 
 const (
