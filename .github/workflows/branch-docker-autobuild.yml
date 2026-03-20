@@ -1,0 +1,68 @@
+name: branch-docker-autobuild
+
+on:
+  push:
+    branches:
+      - signLogsInsideProcesor
+    tags-ignore:
+      - "**"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
+
+permissions: read-all
+
+jobs:
+  build-and-push:
+    if: github.event_name == 'workflow_dispatch' || github.ref_type == 'branch'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE_REPO: ghcr.io/${{ github.repository_owner }}/otelcol-contrib
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup Go tools
+        uses: ./.github/actions/setup-go-tools
+        with:
+          go-version: oldstable
+
+      - name: Set branch tags
+        id: tags
+        shell: bash
+        run: |
+          branch="${GITHUB_REF_NAME,,}"
+          safe_branch="$(echo "$branch" | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//; s/-+/-/g')"
+          if [ -z "$safe_branch" ]; then
+            safe_branch="branch"
+          fi
+          short_sha="$(echo "${GITHUB_SHA}" | cut -c1-12)"
+          echo "safe_branch=$safe_branch" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$short_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build collector image
+        run: make docker-otelcontribcol
+
+      - name: Tag image
+        shell: bash
+        run: |
+          docker tag otelcontribcol:latest "${IMAGE_REPO}:${{ steps.tags.outputs.safe_branch }}"
+          docker tag otelcontribcol:latest "${IMAGE_REPO}:${{ steps.tags.outputs.safe_branch }}-${{ steps.tags.outputs.short_sha }}"
+
+      - name: Push image tags
+        shell: bash
+        run: |
+          docker push "${IMAGE_REPO}:${{ steps.tags.outputs.safe_branch }}"
+          docker push "${IMAGE_REPO}:${{ steps.tags.outputs.safe_branch }}-${{ steps.tags.outputs.short_sha }}"
