@@ -1,0 +1,67 @@
+name: certificatelogverify-collector-image
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+  pull_request:
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  build-image:
+    runs-on: ubuntu-24.04
+    if: ${{ github.actor != 'dependabot[bot]' }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: ./.github/actions/setup-go-tools
+        with:
+          go-version: oldstable
+      - name: Build collector and docker image
+        run: |
+          make genotelcontribcol
+          make docker-otelcontribcol
+      - name: Tag image for certificatelogverify build
+        run: |
+          docker tag otelcontribcol:latest ghcr.io/${{ github.repository_owner }}/otelcol-certificatelogverify:${{ github.sha }}
+      - name: Validate image
+        run: |
+          docker run --rm ghcr.io/${{ github.repository_owner }}/otelcol-certificatelogverify:${{ github.sha }} --version
+
+  publish-image:
+    runs-on: ubuntu-24.04
+    needs: [build-image]
+    if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && github.event_name != 'pull_request'
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: ./.github/actions/setup-go-tools
+        with:
+          go-version: oldstable
+      - name: Build collector and docker image
+        run: |
+          make genotelcontribcol
+          make docker-otelcontribcol
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag and push sha image
+        run: |
+          docker tag otelcontribcol:latest ghcr.io/${{ github.repository_owner }}/otelcol-certificatelogverify:${{ github.sha }}
+          docker push ghcr.io/${{ github.repository_owner }}/otelcol-certificatelogverify:${{ github.sha }}
+      - name: Tag and push latest image (main only)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker tag otelcontribcol:latest ghcr.io/${{ github.repository_owner }}/otelcol-certificatelogverify:latest
+          docker push ghcr.io/${{ github.repository_owner }}/otelcol-certificatelogverify:latest
+      - name: Tag and push release image (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          docker tag otelcontribcol:latest ghcr.io/${{ github.repository_owner }}/otelcol-certificatelogverify:${GITHUB_REF_NAME}
+          docker push ghcr.io/${{ github.repository_owner }}/otelcol-certificatelogverify:${GITHUB_REF_NAME}
