@@ -41,21 +41,23 @@ func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settin
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	logger := settings.Logger.WithOptions(zap.AddStacktrace(zap.PanicLevel))
+
 	settings.Logger.Info("Initializing certificate reader from Kubernetes secret for verification",
 		zap.String("secret", cfg.K8sSecret.Name),
 		zap.String("namespace", cfg.K8sSecret.Namespace),
 		zap.String("cert_key", cfg.K8sSecret.CertKey),
 	)
-	reader, err := NewCertificateReaderFromK8sSecretForVerification(ctx, cfg.K8sSecret, settings.Logger)
+	reader, err := NewCertificateReaderFromK8sSecretForVerification(ctx, cfg.K8sSecret, logger)
 	if err != nil {
-		settings.Logger.Error("Failed to initialize certificate reader from k8s secret",
+		logger.Error("Failed to initialize certificate reader from k8s secret",
 			zap.Error(err),
 			zap.String("secret", cfg.K8sSecret.Name),
 			zap.String("namespace", cfg.K8sSecret.Namespace),
 		)
 		return nil, fmt.Errorf("failed to initialize certificate reader from k8s secret: %w", err)
 	}
-	settings.Logger.Info("Successfully initialized certificate reader from Kubernetes secret",
+	logger.Info("Successfully initialized certificate reader from Kubernetes secret",
 		zap.String("secret", cfg.K8sSecret.Name),
 		zap.String("namespace", cfg.K8sSecret.Namespace),
 	)
@@ -67,7 +69,7 @@ func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settin
 
 	return &certificateHashProcessor{
 		config:   cfg,
-		logger:   settings.Logger,
+		logger:   logger,
 		nextLogs: nextLogs,
 		reader:   reader,
 		hashAlgo: hashAlgo,
@@ -84,7 +86,7 @@ func (p *certificateHashProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs
 		rl.ScopeLogs().RemoveIf(func(sl plog.ScopeLogs) bool {
 			sl.LogRecords().RemoveIf(func(lr plog.LogRecord) bool {
 				if err := p.verifyLogRecord(lr); err != nil {
-					p.logger.Error("Failed to verify log record", zap.String("error", err.Error()))
+					p.logger.Error("Failed to verify log record", zap.Error(err))
 					return true
 				}
 				return false
