@@ -113,7 +113,7 @@ func TestScrape(t *testing.T) {
 		expectedTopQueries, err := golden.ReadLogs(expectedTopQueriesFile)
 		require.NoError(t, err)
 
-		require.NoError(t, plogtest.CompareLogs(actualTopQueries, expectedTopQueries,
+		require.NoError(t, plogtest.CompareLogs(expectedTopQueries, actualTopQueries,
 			plogtest.IgnoreTimestamp()))
 	})
 
@@ -536,7 +536,7 @@ func (c *mockClient) getTopQueries(uint64, uint64) ([]topQuery, error) {
 	return queries, nil
 }
 
-func (*mockClient) explainQuery(_, _ string, _ *zap.Logger) string {
+func (*mockClient) explainQuery(_, _, _, _ string, _ *zap.Logger) string {
 	file, _ := os.ReadFile(filepath.Join("testdata", "obfuscate", "inputQueryPlan.json"))
 
 	return string(file)
