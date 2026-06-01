@@ -13,8 +13,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strings"
+
+	"github.com/gowebpki/jcs"
 )
 
 // LogRecord mirrors the JSON shape produced by the collector's debug exporter
@@ -240,7 +241,13 @@ func serializeLogRecord(record LogRecord) ([]byte, error) {
 		data["attributes"] = attrs
 	}
 
-	return json.Marshal(sortMapKeys(data))
+	// json.Marshal sorts map keys (Go ≥ 1.12); jcs.Transform normalises number
+	// representation per RFC 8785 §3.2.2 and re-sorts keys on UTF-16 code units.
+	b, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+	return jcs.Transform(b)
 }
 
 // parseLogRecords handles both OTLP (resourceLogs) and single-record JSON.
@@ -280,28 +287,4 @@ func parseLogRecords(raw []byte) ([]LogRecord, error) {
 		return nil, fmt.Errorf("could not parse log data as OTLP format or single record")
 	}
 	return []LogRecord{record}, nil
-}
-
-func sortMapKeys(v interface{}) interface{} {
-	switch val := v.(type) {
-	case map[string]interface{}:
-		keys := make([]string, 0, len(val))
-		for k := range val {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		sorted := make(map[string]interface{}, len(val))
-		for _, k := range keys {
-			sorted[k] = sortMapKeys(val[k])
-		}
-		return sorted
-	case []interface{}:
-		out := make([]interface{}, len(val))
-		for i, item := range val {
-			out[i] = sortMapKeys(item)
-		}
-		return out
-	default:
-		return val
-	}
 }

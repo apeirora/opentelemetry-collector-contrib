@@ -14,9 +14,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash"
-	"sort"
 	"strings"
 
+	"github.com/gowebpki/jcs"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -175,36 +175,18 @@ func (p *signingProcessor) serializeLogRecord(lr plog.LogRecord) ([]byte, error)
 		data["attributes"] = attrs
 	}
 
-	return p.marshalJSONDeterministic(data)
+	return p.marshalJCS(data)
 }
 
-func (p *signingProcessor) marshalJSONDeterministic(v interface{}) ([]byte, error) {
-	sorted := p.sortMapKeys(v)
-	return json.Marshal(sorted)
-}
-
-func (p *signingProcessor) sortMapKeys(v interface{}) interface{} {
-	switch val := v.(type) {
-	case map[string]interface{}:
-		sorted := make(map[string]interface{})
-		keys := make([]string, 0, len(val))
-		for k := range val {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			sorted[k] = p.sortMapKeys(val[k])
-		}
-		return sorted
-	case []interface{}:
-		sorted := make([]interface{}, len(val))
-		for i, item := range val {
-			sorted[i] = p.sortMapKeys(item)
-		}
-		return sorted
-	default:
-		return val
+// marshalJCS produces a RFC 8785 (JCS) canonical JSON byte slice.
+// json.Marshal sorts map keys (Go ≥ 1.12), then jcs.Transform normalises
+// number representation and validates the result per the JCS spec.
+func (p *signingProcessor) marshalJCS(v interface{}) ([]byte, error) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
 	}
+	return jcs.Transform(raw)
 }
 
 func (p *signingProcessor) valueToInterface(v pcommon.Value) interface{} {
