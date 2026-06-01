@@ -110,10 +110,3 @@ func normalizeLineEndings(data []byte) []byte {
 	s = strings.ReplaceAll(s, "\r", "\n")
 	return []byte(s)
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
