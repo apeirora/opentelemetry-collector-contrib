@@ -8,7 +8,9 @@ import (
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"hash"
@@ -24,11 +26,13 @@ import (
 )
 
 type signingProcessor struct {
-	config   *Config
-	logger   *zap.Logger
-	nextLogs consumer.Logs
-	provider KeyMaterialProvider
-	hashFunc func() hash.Hash
+	config       *Config
+	logger       *zap.Logger
+	nextLogs     consumer.Logs
+	provider     KeyMaterialProvider
+	hashFunc     func() hash.Hash
+	jwaAlgorithm string // audit.integrity.algorithm value (e.g. "RS256")
+	certRef      string // audit.integrity.certificate value (fingerprint or full DER)
 }
 
 func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settings) (*signingProcessor, error) {
@@ -49,12 +53,19 @@ func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settin
 		return nil, fmt.Errorf("unsupported hash algorithm")
 	}
 
+	certRef, err := buildCertificateRef(provider, cfg.CertificateRef)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build certificate reference: %w", err)
+	}
+
 	return &signingProcessor{
-		config:   cfg,
-		logger:   settings.Logger,
-		nextLogs: nextLogs,
-		provider: provider,
-		hashFunc: hashFunc,
+		config:       cfg,
+		logger:       settings.Logger,
+		nextLogs:     nextLogs,
+		provider:     provider,
+		hashFunc:     hashFunc,
+		jwaAlgorithm: cfg.GetJWAAlgorithm(),
+		certRef:      certRef,
 	}, nil
 }
 
@@ -66,6 +77,12 @@ func (p *signingProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error 
 	resourceLogs := ld.ResourceLogs()
 	for i := 0; i < resourceLogs.Len(); i++ {
 		resourceLog := resourceLogs.At(i)
+
+		// audit.integrity.algorithm and audit.integrity.certificate are Resource-level
+		// attributes per the audit logging spec — set once per ResourceLogs block.
+		resourceLog.Resource().Attributes().PutStr("audit.integrity.algorithm", p.jwaAlgorithm)
+		resourceLog.Resource().Attributes().PutStr("audit.integrity.certificate", p.certRef)
+
 		scopeLogs := resourceLog.ScopeLogs()
 		for j := 0; j < scopeLogs.Len(); j++ {
 			scopeLog := scopeLogs.At(j)
@@ -232,4 +249,22 @@ func (p *signingProcessor) Start(_ context.Context, _ component.Host) error {
 
 func (p *signingProcessor) Shutdown(_ context.Context) error {
 	return nil
+}
+
+// buildCertificateRef computes the audit.integrity.certificate attribute value.
+// "fingerprint" produces "sha256:<hex>" of the DER-encoded certificate.
+// "full" produces the base64 (standard, no line wrapping) of the DER-encoded certificate.
+func buildCertificateRef(provider KeyMaterialProvider, mode string) (string, error) {
+	cert := provider.GetCertificate()
+	if cert == nil {
+		return "", fmt.Errorf("key material provider returned nil certificate")
+	}
+	der := cert.Raw
+	switch mode {
+	case CertificateRefFull:
+		return base64.StdEncoding.EncodeToString(der), nil
+	default: // CertificateRefFingerprint
+		sum := sha256.Sum256(der)
+		return "sha256:" + hex.EncodeToString(sum[:]), nil
+	}
 }
