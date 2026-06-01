@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/processor"
+	"go.uber.org/zap"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/processor/signingprocessor/internal/metadata"
 )
@@ -43,4 +44,23 @@ func createLogsProcessor(
 	}
 
 	return proc, nil
+}
+
+func newKeyMaterialProvider(ctx context.Context, cfg *Config, logger *zap.Logger) (KeyMaterialProvider, error) {
+	switch cfg.KeySource.Type {
+	case KeySourceK8sSecret:
+		logger.Info("Initializing key material provider from Kubernetes secret",
+			zap.String("secret", cfg.KeySource.K8sSecret.Name),
+			zap.String("namespace", cfg.KeySource.K8sSecret.Namespace),
+		)
+		return newK8sKeyMaterialProvider(ctx, cfg.KeySource.K8sSecret, logger)
+	case KeySourceEnv:
+		logger.Info("Initializing key material provider from environment variables",
+			zap.String("cert_env_var", cfg.KeySource.Env.CertEnvVar),
+			zap.String("key_env_var", cfg.KeySource.Env.KeyEnvVar),
+		)
+		return newEnvKeyMaterialProvider(cfg.KeySource.Env)
+	default:
+		return nil, fmt.Errorf("unknown key_source.type: %q", cfg.KeySource.Type)
+	}
 }

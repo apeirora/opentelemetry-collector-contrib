@@ -27,42 +27,24 @@ type signingProcessor struct {
 	config   *Config
 	logger   *zap.Logger
 	nextLogs consumer.Logs
-	reader   *CertificateReader
+	provider KeyMaterialProvider
 	hashFunc func() hash.Hash
 }
 
 func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settings) (*signingProcessor, error) {
 	ctx := context.Background()
-	settings.Logger.Info("Initializing certificate reader from Kubernetes secret",
-		zap.String("secret", cfg.K8sSecret.Name),
-		zap.String("namespace", cfg.K8sSecret.Namespace),
-		zap.String("cert_key", cfg.K8sSecret.CertKey),
-		zap.String("key_key", cfg.K8sSecret.KeyKey),
-	)
-	reader, err := NewCertificateReaderFromK8sSecret(ctx, cfg.K8sSecret, settings.Logger)
+
+	provider, err := newKeyMaterialProvider(ctx, cfg, settings.Logger)
 	if err != nil {
-		settings.Logger.Error("Failed to initialize certificate reader from k8s secret",
-			zap.Error(err),
-			zap.String("secret", cfg.K8sSecret.Name),
-			zap.String("namespace", cfg.K8sSecret.Namespace),
-		)
-		return nil, fmt.Errorf("failed to initialize certificate reader from k8s secret: %w", err)
+		return nil, fmt.Errorf("failed to initialize key material provider: %w", err)
 	}
-	settings.Logger.Info("Successfully initialized certificate reader from Kubernetes secret",
-		zap.String("secret", cfg.K8sSecret.Name),
-		zap.String("namespace", cfg.K8sSecret.Namespace),
-	)
 
 	var hashFunc func() hash.Hash
 	switch cfg.GetHash() {
 	case crypto.SHA256:
-		hashFunc = func() hash.Hash {
-			return crypto.SHA256.New()
-		}
+		hashFunc = func() hash.Hash { return crypto.SHA256.New() }
 	case crypto.SHA512:
-		hashFunc = func() hash.Hash {
-			return crypto.SHA512.New()
-		}
+		hashFunc = func() hash.Hash { return crypto.SHA512.New() }
 	default:
 		return nil, fmt.Errorf("unsupported hash algorithm")
 	}
@@ -71,7 +53,7 @@ func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settin
 		config:   cfg,
 		logger:   settings.Logger,
 		nextLogs: nextLogs,
-		reader:   reader,
+		provider: provider,
 		hashFunc: hashFunc,
 	}, nil
 }
@@ -118,7 +100,7 @@ func (p *signingProcessor) processLogRecord(lr plog.LogRecord) error {
 	hashBytes := h.Sum(nil)
 	hashBase64 := base64.StdEncoding.EncodeToString(hashBytes)
 
-	privateKey := p.reader.GetPrivateKey()
+	privateKey := p.provider.GetPrivateKey()
 	signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, p.config.GetHash(), hashBytes)
 	if err != nil {
 		return fmt.Errorf("failed to sign hash: %w", err)

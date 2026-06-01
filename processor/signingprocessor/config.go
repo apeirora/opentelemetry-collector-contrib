@@ -13,6 +13,9 @@ import (
 const (
 	defaultHashAlgorithm = "SHA256"
 	defaultSignContent   = "body"
+
+	KeySourceK8sSecret = "k8s_secret"
+	KeySourceEnv       = "env"
 )
 
 const (
@@ -22,14 +25,22 @@ const (
 )
 
 var (
-	errInvalidHashAlgorithm = errors.New("hash_algorithm must be SHA256 or SHA512")
-	errInvalidSignContent   = errors.New("sign_content must be body, meta, or attr")
+	errInvalidHashAlgorithm  = errors.New("hash_algorithm must be SHA256 or SHA512")
+	errInvalidSignContent    = errors.New("sign_content must be body, meta, or attr")
+	errInvalidKeySourceType  = errors.New("key_source.type must be k8s_secret or env")
+	errMissingKeySourceConfig = errors.New("key_source config block is missing for the specified type")
 )
 
 type Config struct {
-	HashAlgorithm string           `mapstructure:"hash_algorithm"`
-	SignContent   string           `mapstructure:"sign_content"`
-	K8sSecret     *K8sSecretConfig `mapstructure:"k8s_secret"`
+	HashAlgorithm string          `mapstructure:"hash_algorithm"`
+	SignContent   string          `mapstructure:"sign_content"`
+	KeySource     KeySourceConfig `mapstructure:"key_source"`
+}
+
+type KeySourceConfig struct {
+	Type      string           `mapstructure:"type"`
+	K8sSecret *K8sSecretConfig `mapstructure:"k8s_secret"`
+	Env       *EnvKeyConfig    `mapstructure:"env"`
 }
 
 type K8sSecretConfig struct {
@@ -38,6 +49,11 @@ type K8sSecretConfig struct {
 	CertKey   string `mapstructure:"cert_key"`
 	KeyKey    string `mapstructure:"key_key"`
 	CAKey     string `mapstructure:"ca_key"`
+}
+
+type EnvKeyConfig struct {
+	CertEnvVar string `mapstructure:"cert_env_var"`
+	KeyEnvVar  string `mapstructure:"key_env_var"`
 }
 
 func createDefaultConfig() component.Config {
@@ -58,21 +74,35 @@ func (c *Config) Validate() error {
 		return errInvalidSignContent
 	}
 
-	if c.K8sSecret == nil {
-		return errors.New("k8s_secret is required")
-	}
-
-	if c.K8sSecret.Name == "" {
-		return errors.New("k8s_secret.name is required")
-	}
-	if c.K8sSecret.CertKey == "" {
-		return errors.New("k8s_secret.cert_key is required")
-	}
-	if c.K8sSecret.KeyKey == "" {
-		return errors.New("k8s_secret.key_key is required")
-	}
-	if c.K8sSecret.Namespace == "" {
-		c.K8sSecret.Namespace = "default"
+	switch c.KeySource.Type {
+	case KeySourceK8sSecret:
+		if c.KeySource.K8sSecret == nil {
+			return errMissingKeySourceConfig
+		}
+		if c.KeySource.K8sSecret.Name == "" {
+			return errors.New("key_source.k8s_secret.name is required")
+		}
+		if c.KeySource.K8sSecret.CertKey == "" {
+			return errors.New("key_source.k8s_secret.cert_key is required")
+		}
+		if c.KeySource.K8sSecret.KeyKey == "" {
+			return errors.New("key_source.k8s_secret.key_key is required")
+		}
+		if c.KeySource.K8sSecret.Namespace == "" {
+			c.KeySource.K8sSecret.Namespace = "default"
+		}
+	case KeySourceEnv:
+		if c.KeySource.Env == nil {
+			return errMissingKeySourceConfig
+		}
+		if c.KeySource.Env.CertEnvVar == "" {
+			return errors.New("key_source.env.cert_env_var is required")
+		}
+		if c.KeySource.Env.KeyEnvVar == "" {
+			return errors.New("key_source.env.key_env_var is required")
+		}
+	default:
+		return errInvalidKeySourceType
 	}
 
 	return nil
