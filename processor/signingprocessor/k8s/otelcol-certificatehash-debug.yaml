@@ -236,7 +236,6 @@ data:
     processors:
       signing:
         hash_algorithm: SHA256
-        sign_content: body
         key_source:
           type: k8s_secret
           k8s_secret:
