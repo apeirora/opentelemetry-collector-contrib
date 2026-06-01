@@ -37,16 +37,21 @@ See `BUILD-CUSTOM-IMAGE.md` for detailed instructions.
 
 ## Step 2: Generate Certificates
 
-Generate test certificates using the `create-cert.ps1` script in the repo root, or use your own certificates.
+Generate test certificates using `openssl` or your preferred PKI tooling:
+
+```bash
+openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes \
+  -subj "/CN=signing-processor"
+```
 
 ## Step 3: Create Kubernetes Secret
 
-```powershell
+```bash
 kubectl create namespace otel-demo
-kubectl create secret generic otelcol-test-certs `
-  --from-file=cert.pem=./cert.pem `
-  --from-file=key.pem=./key.pem `
-  --from-file=ca.pem=./ca.pem `
+kubectl create secret generic otelcol-test-certs \
+  --from-file=cert.pem=./cert.pem \
+  --from-file=key.pem=./key.pem \
+  --from-file=ca.pem=./ca.pem \
   -n otel-demo
 ```
 
@@ -75,8 +80,8 @@ kubectl logs -n otel-demo -l app=otelcol-signing
 
 Use the test script:
 
-```powershell
-.\processor\signingprocessor\k8s\test-send-log.ps1
+```bash
+./processor/signingprocessor/k8s/test-send-log.sh
 ```
 
 Or manually port-forward and send logs:
@@ -117,5 +122,3 @@ When logs are processed, you should see in the collector logs (debug exporter ou
 - **Pod crashes:** Check certificate paths and file permissions
 - **Processor not found:** Ensure custom image is built and loaded
 - **No hash/signature:** Check processor is in the pipeline and certificates are readable
-
-See `QUICK-FIX.md` for more troubleshooting tips.

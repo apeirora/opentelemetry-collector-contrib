@@ -17,63 +17,66 @@ The verification script:
 - Go compiler (for building the verification tool)
 - Certificate file (cert.pem) with the public key
 - Log file in JSON format (OTLP format or single log record)
+- `jq` (for the shell helper scripts)
 - kubectl configured (if extracting certificates from Kubernetes)
 
 ## Extracting Certificates from Kubernetes
 
 Before verifying logs, you may need to extract the certificate from the Kubernetes secret:
 
-```powershell
+```bash
 # Extract all certificates (cert.pem, key.pem, ca.pem)
-.\extract-cert-from-k8s.ps1
+./extract-cert.sh
 
 # Extract only the certificate (for verification)
-.\extract-cert-from-k8s.ps1 -CertOnly
+./extract-cert.sh --cert-only
 
 # Extract to a specific directory
-.\extract-cert-from-k8s.ps1 -OutputDir ".\certs"
+./extract-cert.sh --output-dir ./certs
 
 # Extract from a different namespace/secret
-.\extract-cert-from-k8s.ps1 -Namespace "my-namespace" -SecretName "my-secret" -CertOnly
-```
+./extract-cert.sh --namespace my-namespace --secret my-secret --cert-only
 
-The script will save the extracted certificates to the current directory (or specified output directory).
+# Extract from OpenBao instead of Kubernetes
+./extract-cert.sh --source openbao --bao-addr https://bao.internal:8200 \
+  --bao-path secret/data/signing/cert --bao-token s.xxxx
+```
 
 ## Usage
 
-### PowerShell Script (Recommended)
+### Shell Script
 
-```powershell
+```bash
 # Verify log from file with certificate file
-.\verify-signed-log.ps1 -LogFile "log.json" -CertFile "cert.pem"
+./verify-signed-log.sh --log log.json --cert cert.pem
 
 # Verify with SHA512 algorithm
-.\verify-signed-log.ps1 -LogFile "log.json" -CertFile "cert.pem" -HashAlgorithm SHA512
+./verify-signed-log.sh --log log.json --cert cert.pem --hash SHA512
 
 # Verify with verbose output
-.\verify-signed-log.ps1 -LogFile "log.json" -CertFile "cert.pem" -Verbose
+./verify-signed-log.sh --log log.json --cert cert.pem --verbose
 
 # Fetch certificate from Kubernetes secret and verify
-.\verify-signed-log.ps1 -LogFile "log.json" -FromK8s -Namespace otel-demo -SecretName otelcol-test-certs
+./verify-signed-log.sh --log log.json --from-k8s --namespace otel-demo --secret otelcol-test-certs
 ```
 
-### Go Script Directly
+### Go Tool Directly
 
 ```bash
 # Build the tool
-go build -o verify-signed-log.exe verify-signed-log.go
+go build -o verify-signed-log verify-signed-log.go
 
 # Verify log
-.\verify-signed-log.exe -log log.json -cert cert.pem
+./verify-signed-log -log log.json -cert cert.pem
 
 # Verify with SHA512
-.\verify-signed-log.exe -log log.json -cert cert.pem -hash SHA512
+./verify-signed-log -log log.json -cert cert.pem -hash SHA512
 
 # Verify with verbose output
-.\verify-signed-log.exe -log log.json -cert cert.pem -verbose
+./verify-signed-log -log log.json -cert cert.pem -verbose
 
 # Read from stdin
-cat log.json | .\verify-signed-log.exe -log - -cert cert.pem
+cat log.json | ./verify-signed-log -log - -cert cert.pem
 ```
 
 ## Log File Format
@@ -171,23 +174,29 @@ Example output:
 
 To verify logs from the collector's debug exporter:
 
-```powershell
+```bash
 # Step 1: Extract certificate from Kubernetes
-.\extract-cert-from-k8s.ps1 -CertOnly
+./extract-cert.sh --cert-only
 
 # Step 2: Get logs from collector
 kubectl logs -n otel-demo -l app=otelcol-signing --tail=100 > collector-logs.txt
 
 # Step 3: Extract JSON log records (you may need to parse the collector output)
 # Then verify with the script
-.\verify-signed-log.ps1 -LogFile "extracted-log.json" -CertFile "cert.pem"
+./verify-signed-log.sh --log extracted-log.json --cert cert.pem
 ```
 
-Or use the `-FromK8s` flag to automatically fetch the certificate:
+Or use `--from-k8s` to automatically fetch the certificate:
 
-```powershell
+```bash
 # Verify logs and fetch certificate from K8s automatically
-.\verify-signed-log.ps1 -LogFile "extracted-log.json" -FromK8s
+./verify-signed-log.sh --log extracted-log.json --from-k8s
+```
+
+Or run the full end-to-end test (send a log, capture it, verify it):
+
+```bash
+./test-and-verify.sh
 ```
 
 ## Notes
