@@ -11,13 +11,17 @@ import (
 )
 
 const (
-	defaultHashAlgorithm = "SHA256"
-	defaultSignContent   = "body"
+	defaultHashAlgorithm    = "SHA256"
+	defaultSignContent      = "body"
+	defaultCertificateRef   = "fingerprint"
 
 	KeySourceK8sSecret = "k8s_secret"
 	KeySourceEnv       = "env"
 	KeySourceFile      = "file"
 	KeySourceBao       = "bao"
+
+	CertificateRefFingerprint = "fingerprint"
+	CertificateRefFull        = "full"
 )
 
 const (
@@ -27,16 +31,18 @@ const (
 )
 
 var (
-	errInvalidHashAlgorithm  = errors.New("hash_algorithm must be SHA256 or SHA512")
-	errInvalidSignContent    = errors.New("sign_content must be body, meta, or attr")
-	errInvalidKeySourceType   = errors.New("key_source.type must be k8s_secret, env, file, or bao")
-	errMissingKeySourceConfig = errors.New("key_source config block is missing for the specified type")
+	errInvalidHashAlgorithm    = errors.New("hash_algorithm must be SHA256 or SHA512")
+	errInvalidSignContent      = errors.New("sign_content must be body, meta, or attr")
+	errInvalidKeySourceType    = errors.New("key_source.type must be k8s_secret, env, file, or bao")
+	errMissingKeySourceConfig  = errors.New("key_source config block is missing for the specified type")
+	errInvalidCertificateRef   = errors.New("certificate_ref must be fingerprint or full")
 )
 
 type Config struct {
-	HashAlgorithm string          `mapstructure:"hash_algorithm"`
-	SignContent   string          `mapstructure:"sign_content"`
-	KeySource     KeySourceConfig `mapstructure:"key_source"`
+	HashAlgorithm  string          `mapstructure:"hash_algorithm"`
+	SignContent    string          `mapstructure:"sign_content"`
+	CertificateRef string          `mapstructure:"certificate_ref"`
+	KeySource      KeySourceConfig `mapstructure:"key_source"`
 }
 
 type KeySourceConfig struct {
@@ -78,8 +84,9 @@ type BaoKeyConfig struct {
 
 func createDefaultConfig() component.Config {
 	return &Config{
-		HashAlgorithm: defaultHashAlgorithm,
-		SignContent:   defaultSignContent,
+		HashAlgorithm:  defaultHashAlgorithm,
+		SignContent:    defaultSignContent,
+		CertificateRef: defaultCertificateRef,
 	}
 }
 
@@ -92,6 +99,12 @@ func (c *Config) Validate() error {
 		c.SignContent = defaultSignContent
 	} else if c.SignContent != SignContentBody && c.SignContent != SignContentMeta && c.SignContent != SignContentAttr {
 		return errInvalidSignContent
+	}
+
+	if c.CertificateRef == "" {
+		c.CertificateRef = defaultCertificateRef
+	} else if c.CertificateRef != CertificateRefFingerprint && c.CertificateRef != CertificateRefFull {
+		return errInvalidCertificateRef
 	}
 
 	switch c.KeySource.Type {
@@ -156,6 +169,15 @@ func (c *Config) GetHash() crypto.Hash {
 		return crypto.SHA512
 	}
 	return crypto.SHA256
+}
+
+// GetJWAAlgorithm returns the JWA algorithm identifier (RFC 7518) for the
+// configured hash algorithm combined with RSA PKCS1v15 signing.
+func (c *Config) GetJWAAlgorithm() string {
+	if c.HashAlgorithm == "SHA512" {
+		return "RS512"
+	}
+	return "RS256"
 }
 
 var _ component.Config = (*Config)(nil)

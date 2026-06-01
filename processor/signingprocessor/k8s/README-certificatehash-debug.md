@@ -7,8 +7,12 @@ This guide explains how to deploy the signing processor with a debug exporter to
 The signing processor adds cryptographic integrity verification to log records by:
 
 - Computing a hash (SHA-256 or SHA-512) of each log record
-- Signing the hash with an RSA private key
-- Adding `audit.integrity.hash` and `audit.integrity.value` attributes
+- Signing the hash with an RSA private key using RSA PKCS1v15 (JWA: `RS256` or `RS512`)
+- Adding the following attributes per the OTel Audit Logging spec:
+  - `audit.integrity.value` — Base64-encoded RSA signature (record-level)
+  - `audit.integrity.hash` — Base64-encoded hash of the signed content (record-level)
+  - `audit.integrity.algorithm` — JWA algorithm identifier, e.g. `RS256` (resource-level)
+  - `audit.integrity.certificate` — Certificate reference: `sha256:<hex>` fingerprint by default, or full Base64 DER if `certificate_ref: full` (resource-level)
 
 ## Prerequisites
 
@@ -99,8 +103,9 @@ The processor configuration in the ConfigMap:
 ```yaml
 processors:
   signing:
-    hash_algorithm: SHA256  # or SHA512
+    hash_algorithm: SHA256  # or SHA512 — sets JWA algorithm to RS256 or RS512
     sign_content: body      # body | meta | attr
+    certificate_ref: fingerprint  # fingerprint (default) or full
     key_source:
       type: k8s_secret
       k8s_secret:

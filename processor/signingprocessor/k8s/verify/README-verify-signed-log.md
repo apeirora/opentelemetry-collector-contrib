@@ -146,15 +146,17 @@ Example output:
 
 ## How It Works
 
-1. **Hash Verification**: The script reconstructs the log record exactly as it was when hashed by the processor (excluding the hash and signature attributes), serializes it to JSON, and computes the hash using the same algorithm (SHA256 or SHA512). It then compares this computed hash with the `audit.integrity.hash` attribute.
+1. **Hash Verification**: The script reconstructs the log record exactly as it was when hashed by the processor (excluding `audit.integrity.*` attributes), serializes it to JSON, and computes the hash using the same algorithm (`SHA256` or `SHA512`, configured via `--hash`). It then compares this computed hash with the `audit.integrity.hash` attribute.
 
-2. **Signature Verification**: The script decodes the base64-encoded signature from `audit.integrity.value`, then uses RSA PKCS1v15 verification with the public key from the certificate to verify that the signature was created by the holder of the corresponding private key.
+2. **Signature Verification**: The script decodes the base64-encoded signature from `audit.integrity.value`, then uses RSA PKCS1v15 verification with the public key from the certificate to verify that the signature was created by the holder of the corresponding private key. The signing algorithm is indicated by the `audit.integrity.algorithm` resource attribute (`RS256` for SHA-256, `RS512` for SHA-512).
+
+3. **Certificate Reference**: The `audit.integrity.certificate` resource attribute identifies the signing certificate. By default the processor writes a `sha256:<hex>` fingerprint; if configured with `certificate_ref: full` it writes the full Base64-encoded DER certificate instead.
 
 ## Troubleshooting
 
 ### Hash Mismatch
 
-- Ensure the hash algorithm matches what was used by the processor (default is SHA256)
+- Ensure the `--hash` flag matches `hash_algorithm` in the processor config (`SHA256` maps to JWA `RS256`, `SHA512` to `RS512`)
 - Check that the log record hasn't been modified after signing
 - Verify that the serialization format matches (the script uses the same logic as the processor)
 
