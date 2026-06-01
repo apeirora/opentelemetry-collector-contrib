@@ -91,8 +91,7 @@ func (p *signingProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error 
 			for k := 0; k < logRecords.Len(); k++ {
 				logRecord := logRecords.At(k)
 				if err := p.processLogRecord(logRecord); err != nil {
-					p.logger.Error("Failed to process log record", zap.Error(err))
-					continue
+					return fmt.Errorf("failed to process log record: %w", err)
 				}
 			}
 		}
