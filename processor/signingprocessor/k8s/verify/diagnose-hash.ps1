@@ -15,23 +15,23 @@ Write-Host "  Body: $($logContent.body)"
 Write-Host "  Timestamp: $($logContent.timestamp)"
 Write-Host "  Severity Number: $($logContent.severity_number)"
 Write-Host "  Severity Text: $($logContent.severity_text)"
-Write-Host "  Attributes Count: $(($logContent.attributes.PSObject.Properties | Where-Object { $_.Name -ne 'otel.log.record.hash' -and $_.Name -ne 'otel.log.record.signature' }).Count)"
+Write-Host "  Attributes Count: $(($logContent.attributes.PSObject.Properties | Where-Object { $_.Name -ne 'audit.integrity.hash' -and $_.Name -ne 'audit.integrity.value' }).Count)"
 Write-Host ""
 
 Write-Host "Attributes (excluding hash/signature):" -ForegroundColor Yellow
 $logContent.attributes.PSObject.Properties | Where-Object { 
-    $_.Name -ne 'otel.log.record.hash' -and $_.Name -ne 'otel.log.record.signature' 
+    $_.Name -ne 'audit.integrity.hash' -and $_.Name -ne 'audit.integrity.value' 
 } | ForEach-Object {
     Write-Host "  $($_.Name): $($_.Value)"
 }
 Write-Host ""
 
 Write-Host "Hash from log:" -ForegroundColor Yellow
-Write-Host "  $($logContent.attributes.'otel.log.record.hash')"
+Write-Host "  $($logContent.attributes.'audit.integrity.hash')"
 Write-Host ""
 
 Write-Host "Signature from log:" -ForegroundColor Yellow
-Write-Host "  $($logContent.attributes.'otel.log.record.signature'.Substring(0, [Math]::Min(50, $logContent.attributes.'otel.log.record.signature'.Length)))..."
+Write-Host "  $($logContent.attributes.'audit.integrity.value'.Substring(0, [Math]::Min(50, $logContent.attributes.'audit.integrity.value'.Length)))..."
 Write-Host ""
 
 Write-Host "=== Verification Checklist ===" -ForegroundColor Cyan
@@ -42,9 +42,9 @@ $checks = @(
     @{ Check = "Timestamp is present and non-zero"; Status = ($logContent.timestamp -ne $null -and $logContent.timestamp -ne 0) },
     @{ Check = "Severity number is present"; Status = ($logContent.severity_number -ne $null) },
     @{ Check = "Severity text is present"; Status = ($logContent.severity_text -ne $null -and $logContent.severity_text -ne "") },
-    @{ Check = "Hash attribute exists"; Status = ($logContent.attributes.'otel.log.record.hash' -ne $null) },
-    @{ Check = "Signature attribute exists"; Status = ($logContent.attributes.'otel.log.record.signature' -ne $null) },
-    @{ Check = "Other attributes present"; Status = (($logContent.attributes.PSObject.Properties | Where-Object { $_.Name -ne 'otel.log.record.hash' -and $_.Name -ne 'otel.log.record.signature' }).Count -gt 0) }
+    @{ Check = "Hash attribute exists"; Status = ($logContent.attributes.'audit.integrity.hash' -ne $null) },
+    @{ Check = "Signature attribute exists"; Status = ($logContent.attributes.'audit.integrity.value' -ne $null) },
+    @{ Check = "Other attributes present"; Status = (($logContent.attributes.PSObject.Properties | Where-Object { $_.Name -ne 'audit.integrity.hash' -and $_.Name -ne 'audit.integrity.value' }).Count -gt 0) }
 )
 
 foreach ($check in $checks) {

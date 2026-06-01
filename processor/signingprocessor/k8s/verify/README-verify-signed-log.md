@@ -6,7 +6,7 @@ This script verifies the integrity and authenticity of log records that have bee
 
 The verification script:
 
-1. Extracts the `otel.log.record.hash` and `otel.log.record.signature` attributes from log records
+1. Extracts the `audit.integrity.hash` and `audit.integrity.value` attributes from log records
 2. Reconstructs the original log record (without hash/signature attributes)
 3. Serializes it the same way the processor does
 4. Computes the hash and compares it with the provided hash
@@ -92,8 +92,8 @@ The script accepts log files in two formats:
             {
               "body": "Test log message",
               "attributes": {
-                "otel.log.record.hash": "base64-encoded-hash",
-                "otel.log.record.signature": "base64-encoded-signature",
+                "audit.integrity.hash": "base64-encoded-hash",
+                "audit.integrity.value": "base64-encoded-signature",
                 "other.attribute": "value"
               },
               "timestamp": 1234567890000000000,
@@ -114,8 +114,8 @@ The script accepts log files in two formats:
 {
   "body": "Test log message",
   "attributes": {
-    "otel.log.record.hash": "base64-encoded-hash",
-    "otel.log.record.signature": "base64-encoded-signature",
+    "audit.integrity.hash": "base64-encoded-hash",
+    "audit.integrity.value": "base64-encoded-signature",
     "other.attribute": "value"
   },
   "timestamp": 1234567890000000000,
@@ -143,9 +143,9 @@ Example output:
 
 ## How It Works
 
-1. **Hash Verification**: The script reconstructs the log record exactly as it was when hashed by the processor (excluding the hash and signature attributes), serializes it to JSON, and computes the hash using the same algorithm (SHA256 or SHA512). It then compares this computed hash with the `otel.log.record.hash` attribute.
+1. **Hash Verification**: The script reconstructs the log record exactly as it was when hashed by the processor (excluding the hash and signature attributes), serializes it to JSON, and computes the hash using the same algorithm (SHA256 or SHA512). It then compares this computed hash with the `audit.integrity.hash` attribute.
 
-2. **Signature Verification**: The script decodes the base64-encoded signature from `otel.log.record.signature`, then uses RSA PKCS1v15 verification with the public key from the certificate to verify that the signature was created by the holder of the corresponding private key.
+2. **Signature Verification**: The script decodes the base64-encoded signature from `audit.integrity.value`, then uses RSA PKCS1v15 verification with the public key from the certificate to verify that the signature was created by the holder of the corresponding private key.
 
 ## Troubleshooting
 

@@ -8,7 +8,7 @@ The signing processor adds cryptographic integrity verification to log records b
 
 - Computing a hash (SHA-256 or SHA-512) of each log record
 - Signing the hash with an RSA private key
-- Adding `otel.log.record.hash` and `otel.log.record.signature` attributes
+- Adding `audit.integrity.hash` and `audit.integrity.value` attributes
 
 ## Prerequisites
 
@@ -104,8 +104,8 @@ processors:
 
 When logs are processed, you should see in the collector logs (debug exporter output) that each log record has:
 
-- `otel.log.record.hash` - Base64-encoded hash
-- `otel.log.record.signature` - Base64-encoded RSA signature
+- `audit.integrity.hash` - Base64-encoded hash
+- `audit.integrity.value` - Base64-encoded RSA signature
 
 ## Troubleshooting
 
