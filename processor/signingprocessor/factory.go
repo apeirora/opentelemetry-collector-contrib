@@ -60,6 +60,12 @@ func newKeyMaterialProvider(ctx context.Context, cfg *Config, logger *zap.Logger
 			zap.String("key_env_var", cfg.KeySource.Env.KeyEnvVar),
 		)
 		return newEnvKeyMaterialProvider(cfg.KeySource.Env)
+	case KeySourceFile:
+		logger.Info("Initializing key material provider from files",
+			zap.String("cert_file", cfg.KeySource.File.CertFile),
+			zap.String("key_file", cfg.KeySource.File.KeyFile),
+		)
+		return newFileKeyMaterialProvider(cfg.KeySource.File)
 	default:
 		return nil, fmt.Errorf("unknown key_source.type: %q", cfg.KeySource.Type)
 	}

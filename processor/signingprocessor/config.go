@@ -16,6 +16,7 @@ const (
 
 	KeySourceK8sSecret = "k8s_secret"
 	KeySourceEnv       = "env"
+	KeySourceFile      = "file"
 )
 
 const (
@@ -27,7 +28,7 @@ const (
 var (
 	errInvalidHashAlgorithm  = errors.New("hash_algorithm must be SHA256 or SHA512")
 	errInvalidSignContent    = errors.New("sign_content must be body, meta, or attr")
-	errInvalidKeySourceType  = errors.New("key_source.type must be k8s_secret or env")
+	errInvalidKeySourceType   = errors.New("key_source.type must be k8s_secret, env, or file")
 	errMissingKeySourceConfig = errors.New("key_source config block is missing for the specified type")
 )
 
@@ -41,6 +42,7 @@ type KeySourceConfig struct {
 	Type      string           `mapstructure:"type"`
 	K8sSecret *K8sSecretConfig `mapstructure:"k8s_secret"`
 	Env       *EnvKeyConfig    `mapstructure:"env"`
+	File      *FileKeyConfig   `mapstructure:"file"`
 }
 
 type K8sSecretConfig struct {
@@ -54,6 +56,11 @@ type K8sSecretConfig struct {
 type EnvKeyConfig struct {
 	CertEnvVar string `mapstructure:"cert_env_var"`
 	KeyEnvVar  string `mapstructure:"key_env_var"`
+}
+
+type FileKeyConfig struct {
+	CertFile string `mapstructure:"cert_file"`
+	KeyFile  string `mapstructure:"key_file"`
 }
 
 func createDefaultConfig() component.Config {
@@ -100,6 +107,16 @@ func (c *Config) Validate() error {
 		}
 		if c.KeySource.Env.KeyEnvVar == "" {
 			return errors.New("key_source.env.key_env_var is required")
+		}
+	case KeySourceFile:
+		if c.KeySource.File == nil {
+			return errMissingKeySourceConfig
+		}
+		if c.KeySource.File.CertFile == "" {
+			return errors.New("key_source.file.cert_file is required")
+		}
+		if c.KeySource.File.KeyFile == "" {
+			return errors.New("key_source.file.key_file is required")
 		}
 	default:
 		return errInvalidKeySourceType
