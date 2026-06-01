@@ -26,7 +26,7 @@ The signing processor is a custom component and must be included in a custom col
    ```
 
    The Dockerfile:
-   - Uses Go 1.24-alpine as builder
+   - Uses Go 1.25-alpine as builder
    - Runs `make genotelcontribcol` to generate collector code
    - Runs `make otelcontribcol` to build the binary
    - Creates a minimal alpine image with the collector binary
