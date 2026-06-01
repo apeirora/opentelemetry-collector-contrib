@@ -17,6 +17,7 @@ const (
 	KeySourceK8sSecret = "k8s_secret"
 	KeySourceEnv       = "env"
 	KeySourceFile      = "file"
+	KeySourceBao       = "bao"
 )
 
 const (
@@ -28,7 +29,7 @@ const (
 var (
 	errInvalidHashAlgorithm  = errors.New("hash_algorithm must be SHA256 or SHA512")
 	errInvalidSignContent    = errors.New("sign_content must be body, meta, or attr")
-	errInvalidKeySourceType   = errors.New("key_source.type must be k8s_secret, env, or file")
+	errInvalidKeySourceType   = errors.New("key_source.type must be k8s_secret, env, file, or bao")
 	errMissingKeySourceConfig = errors.New("key_source config block is missing for the specified type")
 )
 
@@ -43,6 +44,7 @@ type KeySourceConfig struct {
 	K8sSecret *K8sSecretConfig `mapstructure:"k8s_secret"`
 	Env       *EnvKeyConfig    `mapstructure:"env"`
 	File      *FileKeyConfig   `mapstructure:"file"`
+	Bao       *BaoKeyConfig    `mapstructure:"bao"`
 }
 
 type K8sSecretConfig struct {
@@ -61,6 +63,17 @@ type EnvKeyConfig struct {
 type FileKeyConfig struct {
 	CertFile string `mapstructure:"cert_file"`
 	KeyFile  string `mapstructure:"key_file"`
+}
+
+// BaoKeyConfig configures the OpenBao (Vault-compatible) key material source.
+// Address and Token are optional: if omitted, the client reads BAO_ADDR and
+// BAO_TOKEN (or any other supported BAO_* environment variables) automatically.
+type BaoKeyConfig struct {
+	Address    string `mapstructure:"address"`
+	Token      string `mapstructure:"token"`
+	SecretPath string `mapstructure:"secret_path"`
+	CertField  string `mapstructure:"cert_field"`
+	KeyField   string `mapstructure:"key_field"`
 }
 
 func createDefaultConfig() component.Config {
@@ -117,6 +130,19 @@ func (c *Config) Validate() error {
 		}
 		if c.KeySource.File.KeyFile == "" {
 			return errors.New("key_source.file.key_file is required")
+		}
+	case KeySourceBao:
+		if c.KeySource.Bao == nil {
+			return errMissingKeySourceConfig
+		}
+		if c.KeySource.Bao.SecretPath == "" {
+			return errors.New("key_source.bao.secret_path is required")
+		}
+		if c.KeySource.Bao.CertField == "" {
+			return errors.New("key_source.bao.cert_field is required")
+		}
+		if c.KeySource.Bao.KeyField == "" {
+			return errors.New("key_source.bao.key_field is required")
 		}
 	default:
 		return errInvalidKeySourceType

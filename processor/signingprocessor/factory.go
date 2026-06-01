@@ -66,6 +66,11 @@ func newKeyMaterialProvider(ctx context.Context, cfg *Config, logger *zap.Logger
 			zap.String("key_file", cfg.KeySource.File.KeyFile),
 		)
 		return newFileKeyMaterialProvider(cfg.KeySource.File)
+	case KeySourceBao:
+		logger.Info("Initializing key material provider from OpenBao",
+			zap.String("secret_path", cfg.KeySource.Bao.SecretPath),
+		)
+		return newBaoKeyMaterialProvider(ctx, cfg.KeySource.Bao)
 	default:
 		return nil, fmt.Errorf("unknown key_source.type: %q", cfg.KeySource.Type)
 	}
