@@ -99,11 +99,11 @@ func (p *signingProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error 
 	return p.nextLogs.ConsumeLogs(ctx, ld)
 }
 
-// processLogRecord processes a single log record by computing its hash and signing it.
-// It adds three attributes to the log record:
-//   - audit.integrity.hash: base64-encoded hash of the serialized log content
-//   - audit.integrity.value: base64-encoded RSA signature of the hash
-//   - audit.integrity.sign_content: indicates what content was signed (body/meta/attr)
+// processLogRecord computes a hash over the full log record (excluding
+// audit.integrity.* attributes) and signs it.
+// It adds two attributes:
+//   - audit.integrity.hash:  base64-encoded hash of the canonical serialization
+//   - audit.integrity.value: base64-encoded RSA PKCS1v15 signature of that hash
 func (p *signingProcessor) processLogRecord(lr plog.LogRecord) error {
 	logData, err := p.serializeLogRecord(lr)
 	if err != nil {
@@ -126,58 +126,52 @@ func (p *signingProcessor) processLogRecord(lr plog.LogRecord) error {
 
 	lr.Attributes().PutStr("audit.integrity.hash", hashBase64)
 	lr.Attributes().PutStr("audit.integrity.value", signatureBase64)
-	lr.Attributes().PutStr("audit.integrity.sign_content", p.config.SignContent)
 
 	return nil
 }
 
-// serializeLogRecord serializes the log record to JSON bytes based on the configured sign_content setting.
-// Returns the JSON-encoded bytes representing the log record content that will be hashed and signed.
-// The content included depends on sign_content: body (body only), meta (body + metadata), or attr (body + metadata + attributes not starting with "audit.integrity.").
+// serializeLogRecord produces a canonical JSON representation of the full log
+// record. All audit.integrity.* attributes are excluded because they are added
+// after serialization and must not be part of the signed payload.
 func (p *signingProcessor) serializeLogRecord(lr plog.LogRecord) ([]byte, error) {
 	data := make(map[string]interface{})
 
-	signContent := p.config.SignContent
-	if signContent == "" {
-		signContent = defaultSignContent
+	if lr.Body().Type() == pcommon.ValueTypeStr {
+		data["body"] = lr.Body().Str()
 	}
 
-	if signContent == SignContentBody || signContent == SignContentMeta || signContent == SignContentAttr {
-		if lr.Body().Type() == pcommon.ValueTypeStr {
-			data["body"] = lr.Body().Str()
-		}
+	if lr.Timestamp() != 0 {
+		data["timestamp"] = lr.Timestamp().AsTime().UnixNano()
 	}
 
-	if signContent == SignContentMeta || signContent == SignContentAttr {
-		if lr.Timestamp() != 0 {
-			data["timestamp"] = lr.Timestamp().AsTime().UnixNano()
-		}
-
-		if lr.SeverityNumber() != 0 {
-			data["severity_number"] = lr.SeverityNumber()
-		}
-
-		if lr.SeverityText() != "" {
-			data["severity_text"] = lr.SeverityText()
-		}
-
-		if !lr.TraceID().IsEmpty() {
-			data["trace_id"] = lr.TraceID().String()
-		}
-
-		if !lr.SpanID().IsEmpty() {
-			data["span_id"] = lr.SpanID().String()
-		}
+	if lr.ObservedTimestamp() != 0 {
+		data["observed_timestamp"] = lr.ObservedTimestamp().AsTime().UnixNano()
 	}
 
-	if signContent == SignContentAttr {
-		attrs := make(map[string]interface{})
-		lr.Attributes().Range(func(k string, v pcommon.Value) bool {
-			if !strings.HasPrefix(k, "audit.integrity.") {
-				attrs[k] = p.valueToInterface(v)
-			}
-			return true
-		})
+	if lr.SeverityNumber() != 0 {
+		data["severity_number"] = lr.SeverityNumber()
+	}
+
+	if lr.SeverityText() != "" {
+		data["severity_text"] = lr.SeverityText()
+	}
+
+	if !lr.TraceID().IsEmpty() {
+		data["trace_id"] = lr.TraceID().String()
+	}
+
+	if !lr.SpanID().IsEmpty() {
+		data["span_id"] = lr.SpanID().String()
+	}
+
+	attrs := make(map[string]interface{})
+	lr.Attributes().Range(func(k string, v pcommon.Value) bool {
+		if !strings.HasPrefix(k, "audit.integrity.") {
+			attrs[k] = p.valueToInterface(v)
+		}
+		return true
+	})
+	if len(attrs) > 0 {
 		data["attributes"] = attrs
 	}
 

@@ -17,22 +17,17 @@ import (
 	"strings"
 )
 
+// LogRecord mirrors the JSON shape produced by the collector's debug exporter
+// and the single-record format accepted by verify-signed-log.sh.
 type LogRecord struct {
-	Body           interface{}            `json:"body,omitempty"`
-	Attributes     map[string]interface{} `json:"attributes,omitempty"`
-	Timestamp      *int64                 `json:"timestamp,omitempty"`
-	SeverityNumber *int                   `json:"severity_number,omitempty"`
-	SeverityText   *string                `json:"severity_text,omitempty"`
-	TraceID        *string                `json:"trace_id,omitempty"`
-	SpanID         *string                `json:"span_id,omitempty"`
-}
-
-type LogData struct {
-	ResourceLogs []struct {
-		ScopeLogs []struct {
-			LogRecords []LogRecord `json:"logRecords"`
-		} `json:"scopeLogs"`
-	} `json:"resourceLogs"`
+	Body                interface{}            `json:"body,omitempty"`
+	Attributes          map[string]interface{} `json:"attributes,omitempty"`
+	Timestamp           *int64                 `json:"timestamp,omitempty"`
+	ObservedTimestamp   *int64                 `json:"observed_timestamp,omitempty"`
+	SeverityNumber      *int                   `json:"severity_number,omitempty"`
+	SeverityText        *string                `json:"severity_text,omitempty"`
+	TraceID             *string                `json:"trace_id,omitempty"`
+	SpanID              *string                `json:"span_id,omitempty"`
 }
 
 func main() {
@@ -56,12 +51,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	var hashFunc func() crypto.Hash
+	var hashID crypto.Hash
 	switch strings.ToUpper(*hashAlgo) {
 	case "SHA256":
-		hashFunc = func() crypto.Hash { return crypto.SHA256 }
+		hashID = crypto.SHA256
 	case "SHA512":
-		hashFunc = func() crypto.Hash { return crypto.SHA512 }
+		hashID = crypto.SHA512
 	default:
 		fmt.Fprintf(os.Stderr, "Error: hash algorithm must be SHA256 or SHA512\n")
 		os.Exit(1)
@@ -86,45 +81,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	var logRecords []LogRecord
-	var rawLog map[string]interface{}
-
-	if err := json.Unmarshal(logData, &rawLog); err == nil {
-		if resourceLogs, ok := rawLog["resourceLogs"].([]interface{}); ok {
-			for _, rl := range resourceLogs {
-				if rlMap, ok := rl.(map[string]interface{}); ok {
-					if scopeLogs, ok := rlMap["scopeLogs"].([]interface{}); ok {
-						for _, sl := range scopeLogs {
-							if slMap, ok := sl.(map[string]interface{}); ok {
-								if lrs, ok := slMap["logRecords"].([]interface{}); ok {
-									for _, lr := range lrs {
-										var record LogRecord
-										if lrBytes, err := json.Marshal(lr); err == nil {
-											if err := json.Unmarshal(lrBytes, &record); err == nil {
-												logRecords = append(logRecords, record)
-											}
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		} else {
-			var singleRecord LogRecord
-			if err := json.Unmarshal(logData, &singleRecord); err == nil {
-				logRecords = append(logRecords, singleRecord)
-			} else {
-				fmt.Fprintf(os.Stderr, "Error: Could not parse log data as OTLP format or single record\n")
-				os.Exit(1)
-			}
-		}
-	} else {
-		fmt.Fprintf(os.Stderr, "Error parsing log JSON: %v\n", err)
+	logRecords, err := parseLogRecords(logData)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-
 	if len(logRecords) == 0 {
 		fmt.Fprintf(os.Stderr, "Error: No log records found\n")
 		os.Exit(1)
@@ -161,68 +122,20 @@ func main() {
 		}
 
 		hashValue, ok := record.Attributes["audit.integrity.hash"].(string)
-		if !ok {
-			fmt.Fprintf(os.Stderr, "Error: Log record %d missing audit.integrity.hash attribute\n", i+1)
+		if !ok || hashValue == "" {
+			fmt.Fprintf(os.Stderr, "❌ Log record %d: missing audit.integrity.hash attribute\n", i+1)
 			allValid = false
 			continue
 		}
 
 		signatureValue, ok := record.Attributes["audit.integrity.value"].(string)
-		if !ok {
-			fmt.Fprintf(os.Stderr, "Error: Log record %d missing audit.integrity.value attribute\n", i+1)
+		if !ok || signatureValue == "" {
+			fmt.Fprintf(os.Stderr, "❌ Log record %d: missing audit.integrity.value attribute\n", i+1)
 			allValid = false
 			continue
 		}
 
-		signContent, _ := record.Attributes["audit.integrity.sign_content"].(string)
-		if signContent == "" {
-			signContent = "body"
-		}
-
-		data := make(map[string]interface{})
-
-		if signContent == "body" || signContent == "meta" || signContent == "attr" {
-			if record.Body != nil {
-				if bodyStr, ok := record.Body.(string); ok {
-					data["body"] = bodyStr
-				}
-			}
-		}
-
-		if signContent == "meta" || signContent == "attr" {
-			if record.Timestamp != nil && *record.Timestamp != 0 {
-				data["timestamp"] = *record.Timestamp
-			}
-
-			if record.SeverityNumber != nil && *record.SeverityNumber != 0 {
-				data["severity_number"] = *record.SeverityNumber
-			}
-
-			if record.SeverityText != nil && *record.SeverityText != "" {
-				data["severity_text"] = *record.SeverityText
-			}
-
-			if record.TraceID != nil && *record.TraceID != "" {
-				data["trace_id"] = *record.TraceID
-			}
-
-			if record.SpanID != nil && *record.SpanID != "" {
-				data["span_id"] = *record.SpanID
-			}
-		}
-
-		if signContent == "attr" {
-			attrs := make(map[string]interface{})
-			for k, v := range record.Attributes {
-				if !strings.HasPrefix(k, "otel.log.") {
-					attrs[k] = v
-				}
-			}
-			data["attributes"] = attrs
-		}
-
-		sortedData := sortMapKeys(data)
-		serialized, err := json.Marshal(sortedData)
+		serialized, err := serializeLogRecord(record)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error serializing log record %d: %v\n", i+1, err)
 			allValid = false
@@ -234,8 +147,7 @@ func main() {
 		}
 
 		var computedHash []byte
-		hashAlgo := hashFunc()
-		switch hashAlgo {
+		switch hashID {
 		case crypto.SHA256:
 			h := sha256.Sum256(serialized)
 			computedHash = h[:]
@@ -246,14 +158,12 @@ func main() {
 
 		computedHashBase64 := base64.StdEncoding.EncodeToString(computedHash)
 
-		hashMatch := computedHashBase64 == hashValue
 		if *verbose {
 			fmt.Printf("Computed hash: %s\n", computedHashBase64)
 			fmt.Printf("Provided hash: %s\n", hashValue)
-			fmt.Printf("Hash match: %v\n", hashMatch)
 		}
 
-		if !hashMatch {
+		if computedHashBase64 != hashValue {
 			fmt.Printf("❌ Log record %d: Hash mismatch!\n", i+1)
 			allValid = false
 			continue
@@ -266,8 +176,7 @@ func main() {
 			continue
 		}
 
-		err = rsa.VerifyPKCS1v15(publicKey, hashAlgo, computedHash, signatureBytes)
-		if err != nil {
+		if err := rsa.VerifyPKCS1v15(publicKey, hashID, computedHash, signatureBytes); err != nil {
 			fmt.Printf("❌ Log record %d: Signature verification failed: %v\n", i+1, err)
 			allValid = false
 			continue
@@ -285,25 +194,113 @@ func main() {
 	}
 }
 
+// serializeLogRecord reconstructs the exact JSON payload that the processor
+// hashes and signs: all log-record fields and all attributes whose key does
+// NOT start with "audit.integrity.".
+func serializeLogRecord(record LogRecord) ([]byte, error) {
+	data := make(map[string]interface{})
+
+	if record.Body != nil {
+		if bodyStr, ok := record.Body.(string); ok {
+			data["body"] = bodyStr
+		}
+	}
+
+	if record.Timestamp != nil && *record.Timestamp != 0 {
+		data["timestamp"] = *record.Timestamp
+	}
+
+	if record.ObservedTimestamp != nil && *record.ObservedTimestamp != 0 {
+		data["observed_timestamp"] = *record.ObservedTimestamp
+	}
+
+	if record.SeverityNumber != nil && *record.SeverityNumber != 0 {
+		data["severity_number"] = *record.SeverityNumber
+	}
+
+	if record.SeverityText != nil && *record.SeverityText != "" {
+		data["severity_text"] = *record.SeverityText
+	}
+
+	if record.TraceID != nil && *record.TraceID != "" {
+		data["trace_id"] = *record.TraceID
+	}
+
+	if record.SpanID != nil && *record.SpanID != "" {
+		data["span_id"] = *record.SpanID
+	}
+
+	attrs := make(map[string]interface{})
+	for k, v := range record.Attributes {
+		if !strings.HasPrefix(k, "audit.integrity.") {
+			attrs[k] = v
+		}
+	}
+	if len(attrs) > 0 {
+		data["attributes"] = attrs
+	}
+
+	return json.Marshal(sortMapKeys(data))
+}
+
+// parseLogRecords handles both OTLP (resourceLogs) and single-record JSON.
+func parseLogRecords(raw []byte) ([]LogRecord, error) {
+	var top map[string]interface{}
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return nil, fmt.Errorf("parsing log JSON: %w", err)
+	}
+
+	if _, hasResourceLogs := top["resourceLogs"]; hasResourceLogs {
+		var records []LogRecord
+		resourceLogs, _ := top["resourceLogs"].([]interface{})
+		for _, rl := range resourceLogs {
+			rlMap, _ := rl.(map[string]interface{})
+			scopeLogs, _ := rlMap["scopeLogs"].([]interface{})
+			for _, sl := range scopeLogs {
+				slMap, _ := sl.(map[string]interface{})
+				lrs, _ := slMap["logRecords"].([]interface{})
+				for _, lr := range lrs {
+					b, err := json.Marshal(lr)
+					if err != nil {
+						continue
+					}
+					var record LogRecord
+					if err := json.Unmarshal(b, &record); err == nil {
+						records = append(records, record)
+					}
+				}
+			}
+		}
+		return records, nil
+	}
+
+	// Single record
+	var record LogRecord
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return nil, fmt.Errorf("could not parse log data as OTLP format or single record")
+	}
+	return []LogRecord{record}, nil
+}
+
 func sortMapKeys(v interface{}) interface{} {
 	switch val := v.(type) {
 	case map[string]interface{}:
-		sorted := make(map[string]interface{})
 		keys := make([]string, 0, len(val))
 		for k := range val {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
+		sorted := make(map[string]interface{}, len(val))
 		for _, k := range keys {
 			sorted[k] = sortMapKeys(val[k])
 		}
 		return sorted
 	case []interface{}:
-		sorted := make([]interface{}, len(val))
+		out := make([]interface{}, len(val))
 		for i, item := range val {
-			sorted[i] = sortMapKeys(item)
+			out[i] = sortMapKeys(item)
 		}
-		return sorted
+		return out
 	default:
 		return val
 	}

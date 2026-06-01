@@ -104,7 +104,6 @@ The processor configuration in the ConfigMap:
 processors:
   signing:
     hash_algorithm: SHA256  # or SHA512 — sets JWA algorithm to RS256 or RS512
-    sign_content: body      # body | meta | attr
     certificate_ref: fingerprint  # fingerprint (default) or full
     key_source:
       type: k8s_secret
