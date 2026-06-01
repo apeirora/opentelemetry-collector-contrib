@@ -4,72 +4,32 @@
 package signingprocessor // import "github.com/open-telemetry/opentelemetry-collector-contrib/processor/signingprocessor"
 
 import (
-	"context"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
 	"strings"
-
-	"go.uber.org/zap"
 )
 
+// CertificateReader holds a parsed RSA private key and X.509 certificate.
+// It is used by KeyMaterialProvider implementations after they have fetched
+// the raw PEM data from their respective source.
 type CertificateReader struct {
 	cert *x509.Certificate
 	key  *rsa.PrivateKey
 }
 
-func NewCertificateReaderFromK8sSecret(ctx context.Context, config *K8sSecretConfig, logger interface{}) (*CertificateReader, error) {
-	var zapLogger *zap.Logger
-	if l, ok := logger.(*zap.Logger); ok {
-		zapLogger = l
-	}
-
-	certPEM, err := fetchSecretData(ctx, config.Name, config.Namespace, config.CertKey, zapLogger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch certificate from k8s secret: %w", err)
-	}
-
-	keyPEM, err := fetchSecretData(ctx, config.Name, config.Namespace, config.KeyKey, zapLogger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch private key from k8s secret: %w", err)
-	}
-
-	certPEM = decodeIfBase64(certPEM)
-	keyPEM = decodeIfBase64(keyPEM)
-
-	certPEM = normalizeLineEndings(certPEM)
-	keyPEM = normalizeLineEndings(keyPEM)
-
-	return parseCertificateData(certPEM, keyPEM)
+func (cr *CertificateReader) GetPrivateKey() *rsa.PrivateKey {
+	return cr.key
 }
 
-func decodeIfBase64(data []byte) []byte {
-	if len(data) == 0 {
-		return data
-	}
-
-	dataStr := strings.TrimSpace(string(data))
-	if !strings.HasPrefix(dataStr, "-----BEGIN") {
-		decoded, err := base64.StdEncoding.DecodeString(dataStr)
-		if err == nil && len(decoded) > 0 {
-			decodedStr := string(decoded)
-			if strings.HasPrefix(decodedStr, "-----BEGIN") {
-				return decoded
-			}
-		}
-	}
-	return data
+func (cr *CertificateReader) GetCertificate() *x509.Certificate {
+	return cr.cert
 }
 
-func normalizeLineEndings(data []byte) []byte {
-	dataStr := string(data)
-	dataStr = strings.ReplaceAll(dataStr, "\r\n", "\n")
-	dataStr = strings.ReplaceAll(dataStr, "\r", "\n")
-	return []byte(dataStr)
-}
-
+// parseCertificateData parses PEM-encoded certificate and private key bytes
+// into a CertificateReader. Only RSA keys (PKCS1 and PKCS8) are supported.
 func parseCertificateData(certPEM, keyPEM []byte) (*CertificateReader, error) {
 	if len(certPEM) == 0 {
 		return nil, fmt.Errorf("certificate data is empty")
@@ -129,12 +89,26 @@ func parseCertificateData(certPEM, keyPEM []byte) (*CertificateReader, error) {
 	}, nil
 }
 
-func (cr *CertificateReader) GetPrivateKey() *rsa.PrivateKey {
-	return cr.key
+func decodeIfBase64(data []byte) []byte {
+	if len(data) == 0 {
+		return data
+	}
+	dataStr := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(dataStr, "-----BEGIN") {
+		decoded, err := base64.StdEncoding.DecodeString(dataStr)
+		if err == nil && len(decoded) > 0 {
+			if strings.HasPrefix(string(decoded), "-----BEGIN") {
+				return decoded
+			}
+		}
+	}
+	return data
 }
 
-func (cr *CertificateReader) GetCertificate() *x509.Certificate {
-	return cr.cert
+func normalizeLineEndings(data []byte) []byte {
+	s := strings.ReplaceAll(string(data), "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	return []byte(s)
 }
 
 func min(a, b int) int {
