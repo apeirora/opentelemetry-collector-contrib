@@ -95,9 +95,14 @@ The processor configuration in the ConfigMap:
 processors:
   signing:
     hash_algorithm: SHA256  # or SHA512
-    cert_path: /etc/certs/cert.pem
-    key_path: /etc/certs/key.pem
-    ca_path: /etc/certs/ca.pem
+    sign_content: body      # body | meta | attr
+    key_source:
+      type: k8s_secret
+      k8s_secret:
+        name: otelcol-test-certs
+        namespace: otel-demo
+        cert_key: cert.pem
+        key_key: key.pem
 ```
 
 ## Expected Output
