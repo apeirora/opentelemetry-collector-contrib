@@ -237,12 +237,14 @@ data:
       signing:
         hash_algorithm: SHA256
         sign_content: body
-        k8s_secret:
-          name: otelcol-test-certs
-          namespace: otel-demo
-          cert_key: cert.pem
-          key_key: key.pem
-          ca_key: ca.pem
+        key_source:
+          type: k8s_secret
+          k8s_secret:
+            name: otelcol-test-certs
+            namespace: otel-demo
+            cert_key: cert.pem
+            key_key: key.pem
+            ca_key: ca.pem
       batch:
 
     exporters:
