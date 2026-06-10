@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"go.opentelemetry.io/collector/consumer"
@@ -87,11 +88,13 @@ func TestSyncMultiRecordOTLPBatchProtobuf(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
-	if len(sink.logs) != 1 {
-		t.Fatalf("expected 1 consume call, got %d", len(sink.logs))
+	if len(sink.logs) != 5 {
+		t.Fatalf("expected 5 per-record consume calls, got %d", len(sink.logs))
 	}
-	if sink.logs[0].LogRecordCount() != 5 {
-		t.Fatalf("expected 5 records, got %d", sink.logs[0].LogRecordCount())
+	for i, batch := range sink.logs {
+		if batch.LogRecordCount() != 1 {
+			t.Fatalf("batch %d: expected 1 record, got %d", i, batch.LogRecordCount())
+		}
 	}
 }
 
@@ -106,8 +109,8 @@ func TestSyncMultiRecordOTLPBatchJSON(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
-	if sink.logs[0].LogRecordCount() != 3 {
-		t.Fatalf("expected 3 records, got %d", sink.logs[0].LogRecordCount())
+	if len(sink.logs) != 3 {
+		t.Fatalf("expected 3 per-record consume calls, got %d", len(sink.logs))
 	}
 }
 
@@ -123,11 +126,13 @@ func TestSyncFanOutAllSinksSuccess(t *testing.T) {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
 	for i, sink := range []*mockConsumer{sinkA, sinkB, sinkC} {
-		if len(sink.logs) != 1 {
-			t.Fatalf("sink %d: expected 1 batch, got %d", i, len(sink.logs))
+		if len(sink.logs) != 2 {
+			t.Fatalf("sink %d: expected 2 per-record consume calls, got %d", i, len(sink.logs))
 		}
-		if sink.logs[0].LogRecordCount() != 2 {
-			t.Fatalf("sink %d: expected 2 records, got %d", i, sink.logs[0].LogRecordCount())
+		for j, batch := range sink.logs {
+			if batch.LogRecordCount() != 1 {
+				t.Fatalf("sink %d batch %d: expected 1 record, got %d", i, j, batch.LogRecordCount())
+			}
 		}
 	}
 }
@@ -180,6 +185,133 @@ func TestSyncFanOutRetryDuplicatesSuccessfulSink(t *testing.T) {
 	}
 	if len(flakyB.logs) != 1 {
 		t.Fatalf("sink B only receives data once flaky sink recovers, got %d batches", len(flakyB.logs))
+	}
+}
+
+type selectiveFailConsumer struct {
+	failBodies map[string]error
+	logs       []plog.Logs
+}
+
+func (m *selectiveFailConsumer) ConsumeLogs(_ context.Context, logs plog.Logs) error {
+	body := ""
+	for i := 0; i < logs.ResourceLogs().Len(); i++ {
+		rl := logs.ResourceLogs().At(i)
+		for j := 0; j < rl.ScopeLogs().Len(); j++ {
+			sl := rl.ScopeLogs().At(j)
+			for k := 0; k < sl.LogRecords().Len(); k++ {
+				body = sl.LogRecords().At(k).Body().AsString()
+			}
+		}
+	}
+	if err, ok := m.failBodies[body]; ok {
+		return err
+	}
+	copied := plog.NewLogs()
+	logs.CopyTo(copied)
+	m.logs = append(m.logs, copied)
+	return nil
+}
+
+func (*selectiveFailConsumer) Capabilities() consumer.Capabilities {
+	return consumer.Capabilities{}
+}
+
+func testOTLPBatchRequestWithIDs(t *testing.T, ids []string, asJSON bool) []byte {
+	t.Helper()
+	logs := plog.NewLogs()
+	rl := logs.ResourceLogs().AppendEmpty()
+	sl := rl.ScopeLogs().AppendEmpty()
+	for _, id := range ids {
+		lr := sl.LogRecords().AppendEmpty()
+		lr.Body().SetStr(id)
+		lr.SetSeverityNumber(plog.SeverityNumberInfo)
+		lr.Attributes().PutStr(auditAttrRecordID, id)
+	}
+	otlpReq := plogotlp.NewExportRequestFromLogs(logs)
+	if asJSON {
+		data, err := otlpReq.MarshalJSON()
+		if err != nil {
+			t.Fatalf("marshal json: %v", err)
+		}
+		return data
+	}
+	data, err := otlpReq.MarshalProto()
+	if err != nil {
+		t.Fatalf("marshal proto: %v", err)
+	}
+	return data
+}
+
+func TestSyncPartialBatchRejectsOnlyFailedRecords(t *testing.T) {
+	t.Parallel()
+	sink := &selectiveFailConsumer{
+		failBodies: map[string]error{
+			"bad-record": consumererror.NewPermanent(errors.New("rejected_verify_failed: integrity mismatch")),
+		},
+	}
+	r := newTestReceiver(t, testSyncConfig(), sink, true)
+
+	body := testOTLPBatchRequestWithIDs(t, []string{"good-record", "bad-record", "good-record-2"}, false)
+	w := postSyncOTLP(t, r, body, "application/x-protobuf")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 partial success, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	resp := plogotlp.NewExportResponse()
+	if err := resp.UnmarshalProto(w.Body.Bytes()); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	partial := resp.PartialSuccess()
+	if partial.RejectedLogRecords() != 1 {
+		t.Fatalf("expected 1 rejected record, got %d", partial.RejectedLogRecords())
+	}
+	if !strings.Contains(partial.ErrorMessage(), "bad-record") {
+		t.Fatalf("expected failed id in partial success message, got %q", partial.ErrorMessage())
+	}
+	if len(sink.logs) != 2 {
+		t.Fatalf("expected 2 accepted deliveries, got %d", len(sink.logs))
+	}
+
+	keys, err := r.getPendingKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("partial success should clear WAL, got %d keys", len(keys))
+	}
+}
+
+func TestSyncPartialBatchJSONResponse(t *testing.T) {
+	t.Parallel()
+	sink := &selectiveFailConsumer{
+		failBodies: map[string]error{
+			"bad-record": consumererror.NewPermanent(errors.New("rejected_verify_failed: bad cert")),
+		},
+	}
+	r := newTestReceiver(t, testSyncConfig(), sink, true)
+
+	body := testOTLPBatchRequestWithIDs(t, []string{"good-record", "bad-record"}, true)
+	w := postSyncOTLP(t, r, body, "application/json")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	resp := plogotlp.NewExportResponse()
+	if err := resp.UnmarshalJSON(w.Body.Bytes()); err != nil {
+		t.Fatalf("unmarshal json response: %v", err)
+	}
+	partial := resp.PartialSuccess()
+	if partial.RejectedLogRecords() != 1 {
+		t.Fatalf("expected 1 rejected record, got %d", partial.RejectedLogRecords())
+	}
+	if !strings.Contains(partial.ErrorMessage(), "bad-record") {
+		t.Fatalf("expected failed id in error message, got %q", partial.ErrorMessage())
+	}
+	if len(sink.logs) != 1 {
+		t.Fatalf("expected 1 accepted delivery, got %d", len(sink.logs))
 	}
 }
 

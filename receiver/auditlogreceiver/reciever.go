@@ -424,27 +424,49 @@ func (r *auditLogReceiver) persistPendingLogs(logs plog.Logs) (string, error) {
 	return key, nil
 }
 
-func (r *auditLogReceiver) syncDeliver(ctx context.Context, logs plog.Logs) error {
+func (r *auditLogReceiver) syncDeliver(ctx context.Context, logs plog.Logs) (*syncDeliveryResult, error) {
 	pendingKey, err := r.persistPendingLogs(logs)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if err := r.checkCircuitForRequest(); err != nil {
-		return err
+		return nil, err
 	}
 
-	if err := r.deliverLogs(ctx, logs); err != nil {
-		if isDiscardableProcessingError(err) {
-			_ = r.deletePendingEntry(pendingKey)
-		}
-		return err
+	result, err := r.deliverLogsByRecord(ctx, logs)
+	if err != nil {
+		return nil, err
 	}
 
 	if err := r.deletePendingEntry(pendingKey); err != nil {
 		r.logger.Error("Delivered but failed to delete pending entry", zap.String("key", pendingKey), errString(err))
 	}
-	return nil
+	return result, nil
+}
+
+func (r *auditLogReceiver) deliverLogsByRecord(ctx context.Context, logs plog.Logs) (*syncDeliveryResult, error) {
+	result := &syncDeliveryResult{}
+	batches := splitLogsByRecord(logs)
+
+	for i, batch := range batches {
+		fallbackID := fmt.Sprintf("record-%d", i)
+		recordID := auditRecordIDFromLogs(batch, fallbackID)
+
+		if err := r.deliverLogs(ctx, batch); err != nil {
+			if isDiscardableProcessingError(err) {
+				result.failedRecords = append(result.failedRecords, failedAuditRecord{
+					ID:     recordID,
+					Reason: err.Error(),
+				})
+				continue
+			}
+			return nil, err
+		}
+		result.accepted++
+	}
+
+	return result, nil
 }
 
 func (r *auditLogReceiver) recoverSyncPending() {
@@ -686,10 +708,24 @@ func (r *auditLogReceiver) handleOTLP(w http.ResponseWriter, req *http.Request, 
 		return
 	}
 
-	if err := r.syncDeliver(req.Context(), logs); err != nil {
+	result, err := r.syncDeliver(req.Context(), logs)
+	if err != nil {
 		r.logger.Error("Sync delivery failed", errString(err))
 		writeAuditHTTPError(w, err)
 		r.obsrecv.EndLogsOp(ctx, format, numRecords, err)
+		return
+	}
+
+	if result.hasFailures() {
+		if result.accepted == 0 {
+			writeAuditHTTPError(w, consumererror.NewPermanent(
+				fmt.Errorf("%s: all %d log record(s) rejected", rejectedVerifyFailed, result.rejectedCount()),
+			))
+			r.obsrecv.EndLogsOp(ctx, format, numRecords, fmt.Errorf("all records rejected"))
+			return
+		}
+		r.writeOTLPPartialSuccessResponse(w, isProto, result)
+		r.obsrecv.EndLogsOp(ctx, format, result.accepted, nil)
 		return
 	}
 
@@ -738,7 +774,18 @@ func (r *auditLogReceiver) acceptAsync(w http.ResponseWriter, logs plog.Logs, bo
 }
 
 func (r *auditLogReceiver) writeOTLPResponse(w http.ResponseWriter, isProto bool, status int) {
+	r.writeOTLPExportResponse(w, isProto, status, plogotlp.NewExportResponse())
+}
+
+func (r *auditLogReceiver) writeOTLPPartialSuccessResponse(w http.ResponseWriter, isProto bool, result *syncDeliveryResult) {
 	response := plogotlp.NewExportResponse()
+	partial := response.PartialSuccess()
+	partial.SetRejectedLogRecords(int64(result.rejectedCount()))
+	partial.SetErrorMessage(result.partialSuccessMessage())
+	r.writeOTLPExportResponse(w, isProto, http.StatusOK, response)
+}
+
+func (r *auditLogReceiver) writeOTLPExportResponse(w http.ResponseWriter, isProto bool, status int, response plogotlp.ExportResponse) {
 	var responseData []byte
 	var err error
 	if isProto {
