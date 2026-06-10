@@ -14,6 +14,11 @@ receivers:
     path: /v1/audit
     response_mode: sync
     storage: file_storage
+    tls:
+      cert_file: /etc/otel/certs/server.crt
+      key_file: /etc/otel/certs/server.key
+      client_ca_file: /etc/otel/certs/ca.crt
+      min_version: "1.2"
     circuit_breaker:
       enabled: true
 

@@ -41,16 +41,20 @@ func (*mockConsumer) Capabilities() consumer.Capabilities {
 }
 
 func testSyncConfig() *Config {
+	sc := confighttp.NewDefaultServerConfig()
+	sc.Endpoint = "localhost:0"
 	return &Config{
-		ServerConfig: confighttp.NewDefaultServerConfig(),
+		ServerConfig: sc,
 		StorageID:    component.NewIDWithName(component.MustNewType("file_storage"), ""),
 		ResponseMode: ResponseModeSync,
 	}
 }
 
 func testAsyncConfig() *Config {
+	sc := confighttp.NewDefaultServerConfig()
+	sc.Endpoint = "localhost:0"
 	return &Config{
-		ServerConfig: confighttp.NewDefaultServerConfig(),
+		ServerConfig: sc,
 		StorageID:    component.NewIDWithName(component.MustNewType("file_storage"), ""),
 		ResponseMode: ResponseModeAsync,
 		Delivery: DeliveryConfig{

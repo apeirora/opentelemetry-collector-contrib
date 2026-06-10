@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/component/componentstatus"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/consumer/consumererror"
 	"go.opentelemetry.io/collector/extension/xextension/storage"
@@ -60,9 +61,11 @@ type auditLogReceiver struct {
 	server   *http.Server
 	storage  storage.Client
 	cfg      *Config
+	settings receiver.Settings
 	ctx      context.Context
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
+	shutdownWG sync.WaitGroup
 
 	circuitBreaker *circuitBreaker
 	obsrecv        *receiverhelper.ObsReport
@@ -80,9 +83,14 @@ func NewReceiver(cfg *Config, set receiver.Settings, consumer consumer.Logs) (*A
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	transport := "http"
+	if cfg.TLS.HasValue() {
+		transport = "https"
+	}
+
 	obsrecv, err := receiverhelper.NewObsReport(receiverhelper.ObsReportSettings{
 		ReceiverID:             set.ID,
-		Transport:              "http",
+		Transport:              transport,
 		ReceiverCreateSettings: set,
 	})
 	if err != nil {
@@ -96,6 +104,7 @@ func NewReceiver(cfg *Config, set receiver.Settings, consumer consumer.Logs) (*A
 		logger:   logger,
 		consumer: consumer,
 		cfg:      cfg,
+		settings: set,
 		ctx:      ctx,
 		cancel:   cancel,
 		obsrecv:  obsrecv,
@@ -103,24 +112,14 @@ func NewReceiver(cfg *Config, set receiver.Settings, consumer consumer.Logs) (*A
 
 	r.circuitBreaker = newCircuitBreaker(cfg.CircuitBreaker, logger)
 
-	path := cfg.Path
-	if path == "" {
-		path = defaultPath
-	}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc(path, r.handleAuditLogs)
-
-	r.server = &http.Server{
-		Addr:              cfg.Endpoint,
-		Handler:           mux,
-		ReadHeaderTimeout: 20 * time.Second,
-	}
-
 	return r, nil
 }
 
 func (r *auditLogReceiver) Start(ctx context.Context, host component.Host) error {
+	if r.server != nil {
+		return nil
+	}
+
 	extensions := host.GetExtensions()
 	storageExtension, exists := extensions[r.cfg.StorageID]
 	if !exists {
@@ -145,9 +144,33 @@ func (r *auditLogReceiver) Start(ctx context.Context, host component.Host) error
 		r.recoverSyncPending()
 	}
 
+	path := r.cfg.Path
+	if path == "" {
+		path = defaultPath
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(path, r.handleAuditLogs)
+
+	ln, err := r.cfg.ToListener(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to bind to address %s: %w", r.cfg.Endpoint, err)
+	}
+
+	r.server, err = r.cfg.ToServer(ctx, host, r.settings.TelemetrySettings, mux)
+	if err != nil {
+		return err
+	}
+
+	if r.cfg.ReadHeaderTimeout == 0 {
+		r.server.ReadHeaderTimeout = 20 * time.Second
+	}
+
+	r.shutdownWG.Add(1)
 	go func() {
-		if err := r.server.ListenAndServe(); err != http.ErrServerClosed {
-			r.logger.Error("HTTP server error", errString(err))
+		defer r.shutdownWG.Done()
+		if errHTTP := r.server.Serve(ln); !errors.Is(errHTTP, http.ErrServerClosed) && errHTTP != nil {
+			componentstatus.ReportStatus(host, componentstatus.NewFatalErrorEvent(errHTTP))
 		}
 	}()
 
@@ -155,8 +178,11 @@ func (r *auditLogReceiver) Start(ctx context.Context, host component.Host) error
 }
 
 func (r *auditLogReceiver) Shutdown(ctx context.Context) error {
-	if err := r.server.Shutdown(ctx); err != nil {
-		r.logger.Error("HTTP server shutdown error", errString(err))
+	if r.server != nil {
+		if err := r.server.Shutdown(ctx); err != nil {
+			r.logger.Error("HTTP server shutdown error", errString(err))
+		}
+		r.shutdownWG.Wait()
 	}
 
 	r.inflightWg.Wait()

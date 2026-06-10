@@ -17,6 +17,8 @@ import (
 // defaultPath is the Tier-2 audit ingest endpoint per the audit collector spec.
 const defaultPath = "/v1/audit"
 
+const defaultEndpoint = "0.0.0.0:4310"
+
 func NewFactory() receiver.Factory {
 	return receiver.NewFactory(
 		metadata.Type,
@@ -28,7 +30,11 @@ func NewFactory() receiver.Factory {
 func createDefaultConfig() component.Config {
 	circuitEnabled := true
 	return &Config{
-		ServerConfig: confighttp.NewDefaultServerConfig(),
+		ServerConfig: func() confighttp.ServerConfig {
+			sc := confighttp.NewDefaultServerConfig()
+			sc.Endpoint = defaultEndpoint
+			return sc
+		}(),
 		Path:         defaultPath,
 		ResponseMode: defaultResponseMode,
 		Delivery: DeliveryConfig{

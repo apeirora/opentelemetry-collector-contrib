@@ -26,13 +26,13 @@ const (
 var (
 	errStorageRequired     = errors.New("storage extension is required")
 	errInvalidResponseMode = errors.New("response_mode must be sync or async")
+	errEmptyEndpoint       = errors.New("endpoint must be specified")
 )
 
 type Config struct {
 	confighttp.ServerConfig `mapstructure:",squash"`
 
-	Endpoint string `mapstructure:"endpoint"`
-	Path     string `mapstructure:"path"`
+	Path string `mapstructure:"path"`
 
 	// StorageID is required. Sync mode uses it as a write-ahead log before pipeline
 	// delivery (crash recovery). Async mode uses it for the pending delivery queue.
@@ -82,6 +82,10 @@ func (cb *CircuitBreakerConfig) applyDefaults() {
 }
 
 func (c *Config) Validate() error {
+	if c.Endpoint == "" {
+		return errEmptyEndpoint
+	}
+
 	if c.ResponseMode == "" {
 		c.ResponseMode = defaultResponseMode
 	} else if c.ResponseMode != ResponseModeSync && c.ResponseMode != ResponseModeAsync {
