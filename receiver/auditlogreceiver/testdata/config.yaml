@@ -1,0 +1,22 @@
+extensions:
+  file_storage:
+    directory: ./storage
+    create_directory: true
+
+receivers:
+  auditlogreceiver:
+    endpoint: 0.0.0.0:8080
+    path: /v1/audit
+    response_mode: sync
+    storage: file_storage
+
+exporters:
+  debug:
+    verbosity: detailed
+
+service:
+  extensions: [file_storage]
+  pipelines:
+    logs:
+      receivers: [auditlogreceiver]
+      exporters: [debug]

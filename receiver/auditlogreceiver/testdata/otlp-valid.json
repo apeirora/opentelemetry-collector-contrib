@@ -1,0 +1,50 @@
+{
+  "resourceLogs": [
+    {
+      "scopeLogs": [
+        {
+          "logRecords": [
+            {
+              "timeUnixNano": "1779798812842477200",
+              "body": {
+                "stringValue": "{\"event\":\"curl.test.valid\",\"n\":0,\"id\":\"rec-curl-valid\"}"
+              },
+              "attributes": [
+                {
+                  "key": "audit.record_id",
+                  "value": {
+                    "stringValue": "rec-curl-valid"
+                  }
+                },
+                {
+                  "key": "sign_content",
+                  "value": {
+                    "stringValue": "body"
+                  }
+                },
+                {
+                  "key": "audit.hash",
+                  "value": {
+                    "stringValue": "bebdbeae4bc1e5983625b2fdff0625712e91086818ea7518ac86e4bfd055a7db"
+                  }
+                },
+                {
+                  "key": "audit.hmac",
+                  "value": {
+                    "stringValue": "6ff8983d63d20b1f1ff17565ca1a4be4dd945b05653beb1b1be500adf94e3f43"
+                  }
+                },
+                {
+                  "key": "audit.signature",
+                  "value": {
+                    "stringValue": "UPzg5miQpzrVi24EY8qv7ESuJ9Hq3n/geQzkfDd7aFrmCwoBa/tDh2Ot34Evbk7ydLAk/EqjJMpcsnuRyLiMC9cbhCRJTdcix+2hz2SbeEKpKVUafUytnUpMtRA9j0K7zRvSL/t/LDSysNcGGfcOjQFyhKCIVzqVOZk/FAX16rLu8p3b/065YYCK+eYCd4EC+/xhEnjzzpHJ7OQXz/A9i46o7m1O0em1IsHd/h1K/mx6OjzhD7/PDnXervEnyTb4ffbIZv2ukYac/lvQbV1Gf2DRhAbBQZssamCR762jMqujCSQBxPh8t/41flBR6RtBkXNiI+c54rPCsIVxHkLgZw=="
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,210 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: otel-demo
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: otelcol-certificatelogverify
+  namespace: otel-demo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: otelcol-secret-reader
+  namespace: otel-demo
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["otelcol-test-certs"]
+  verbs: ["get", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: otelcol-secret-reader
+  namespace: otel-demo
+subjects:
+- kind: ServiceAccount
+  name: otelcol-certificatelogverify
+  namespace: otel-demo
+roleRef:
+  kind: Role
+  name: otelcol-secret-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otelcol-config
+  namespace: otel-demo
+data:
+  config.yaml: |
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+    
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    
+    processors:
+      certificatelogverify:
+        hmac_algorithm: SHA256
+        sign_content: attr
+        k8s_secret:
+          name: otelcol-test-certs
+          namespace: otel-demo
+          hmac_key_entry: hmac.key
+    
+    exporters:
+      debug:
+        verbosity: detailed
+    
+    service:
+      telemetry:
+        logs:
+          level: debug
+      extensions: [health_check]
+      pipelines:
+        logs:
+          receivers: [otlp]
+          processors: [certificatelogverify]
+          exporters: [debug]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otelcol-certificatelogverify
+  namespace: otel-demo
+  labels:
+    app: otelcol-certificatelogverify
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: otelcol-certificatelogverify
+  template:
+    metadata:
+      labels:
+        app: otelcol-certificatelogverify
+    spec:
+      serviceAccountName: otelcol-certificatelogverify
+      initContainers:
+      - name: fetch-cert-from-openbao
+        image: alpine/k8s:1.28.0
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          echo "Fetching certificate from OpenBao..."
+          TOKEN=$(cat /var/run/secrets/openbao/token)
+          OPENBAO_ADDR=${OPENBAO_ADDR:-http://openbao.openbao:8200}
+          SECRET_PATH=${OPENBAO_SECRET_PATH:-otelcol/certificate}
+          CERT_KEY=${OPENBAO_CERT_KEY:-cert.pem}
+          
+          RESPONSE=$(curl -s -H "X-Vault-Token: $TOKEN" "$OPENBAO_ADDR/v1/secret/data/$SECRET_PATH")
+          CERT_DATA=$(echo "$RESPONSE" | jq -r ".data.data.$CERT_KEY // .data.data[\"$CERT_KEY\"] // empty")
+          
+          if [ -z "$CERT_DATA" ] || [ "$CERT_DATA" = "null" ]; then
+            echo "Error: Failed to fetch certificate from OpenBao"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+          
+          CERT_DATA=$(echo "$CERT_DATA" | sed 's/\\n/\n/g')
+          
+          echo "Certificate fetched successfully, creating/updating Kubernetes secret..."
+          
+          kubectl create secret generic otelcol-test-certs \
+            --from-literal=cert.pem="$CERT_DATA" \
+            --namespace=otel-demo \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
+          echo "Kubernetes secret updated successfully"
+        env:
+        - name: OPENBAO_ADDR
+          value: "http://openbao.openbao:8200"
+        - name: OPENBAO_SECRET_PATH
+          value: "otelcol/certificate"
+        - name: OPENBAO_CERT_KEY
+          value: "cert.pem"
+        volumeMounts:
+        - name: openbao-token
+          mountPath: /var/run/secrets/openbao
+          readOnly: true
+      containers:
+      - name: otelcol
+        image: certificatelogverify-collector:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 4317
+          name: otlp-grpc
+          protocol: TCP
+        - containerPort: 4318
+          name: otlp-http
+          protocol: TCP
+        - containerPort: 13133
+          name: healthcheck
+          protocol: TCP
+        volumeMounts:
+        - name: config
+          mountPath: /etc/otelcol
+          readOnly: true
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 13133
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 13133
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: otelcol-config
+      - name: openbao-token
+        secret:
+          secretName: openbao-token
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otelcol-certificatelogverify
+  namespace: otel-demo
+  labels:
+    app: otelcol-certificatelogverify
+spec:
+  type: ClusterIP
+  selector:
+    app: otelcol-certificatelogverify
+  ports:
+  - name: otlp-grpc
+    port: 4317
+    targetPort: 4317
+    protocol: TCP
+  - name: otlp-http
+    port: 4318
+    targetPort: 4318
+    protocol: TCP
+  - name: healthcheck
+    port: 13133
+    targetPort: 13133
+    protocol: TCP

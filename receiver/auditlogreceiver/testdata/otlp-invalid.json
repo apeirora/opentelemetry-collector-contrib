@@ -1,0 +1,50 @@
+{
+  "resourceLogs": [
+    {
+      "scopeLogs": [
+        {
+          "logRecords": [
+            {
+              "timeUnixNano": "1779798812842477200",
+              "body": {
+                "stringValue": "{\"event\":\"curl.test.invalid\",\"n\":1,\"id\":\"rec-curl-invalid\"}"
+              },
+              "attributes": [
+                {
+                  "key": "audit.record_id",
+                  "value": {
+                    "stringValue": "rec-curl-invalid"
+                  }
+                },
+                {
+                  "key": "sign_content",
+                  "value": {
+                    "stringValue": "body"
+                  }
+                },
+                {
+                  "key": "audit.hash",
+                  "value": {
+                    "stringValue": "d42687639cb45ee6336edf8488215f8652db78e4c0a402a5dd2de2fe8e4eb5a0"
+                  }
+                },
+                {
+                  "key": "audit.hmac",
+                  "value": {
+                    "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+                  }
+                },
+                {
+                  "key": "audit.signature",
+                  "value": {
+                    "stringValue": "FlwW5rrfS1XY2ucuFT0AG033DG6Vpr6ip47f9oD8LTJcED3FxPEabK2MdNrCAPx/tjpwL9XrTrBM62f3sonm+le7FozMLME/BjfrJ79aC2bAsm9B13cWCgYahAzUkWF7S9bOJAbKN5FIkAnhxfdvRm/m5c/u/vGWsRL6Vaoy82/raZcpNF3MTq+Wrazt23U3FqAu7WBHp8jWkWxQbMNi5jgBTbK2BIwidiEzWPKNv1cQoBF37i4MuMtN9QfKVtwhWR6G5LjarA41EE0p3ZYglCuRV0COSugKyEDrMwgmDNoBIz3mml7zjJFqwg5/OSsr2uhTBfTPyBQtyBZbeIYu5Q=="
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

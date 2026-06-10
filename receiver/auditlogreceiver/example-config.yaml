@@ -1,0 +1,40 @@
+extensions:
+  file_storage:
+    directory: ./storage
+    create_directory: true
+    timeout: 1s
+    compaction:
+      on_start: true
+      directory: ./storage/compaction
+      max_transaction_size: 1000
+
+receivers:
+  auditlogreceiver:
+    endpoint: 0.0.0.0:4310
+    path: /v1/audit
+    response_mode: sync
+    storage: file_storage
+    circuit_breaker:
+      enabled: true
+
+exporters:
+  debug:
+    verbosity: detailed
+
+processors:
+  certificatelogverify:
+    mode: sync
+    failure_mode: strict
+    hmac_key_file: processor/certificatelogverifyprocessor/testdata/dev_hmac_key.txt
+    cert_file: processor/certificatelogverifyprocessor/k8s/certificates/cert.pem
+    hash_chain:
+      enabled: false
+      storage: file_storage
+
+service:
+  extensions: [file_storage]
+  pipelines:
+    logs:
+      receivers: [auditlogreceiver]
+      processors: [certificatelogverify]
+      exporters: [debug]

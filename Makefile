@@ -473,6 +473,16 @@ oteltestbedcollite: genoteltestbedcol
 	cd ./cmd/oteltestbedcol && GO111MODULE=on CGO_ENABLED=0 $(GOCMD) build -trimpath -o ../../bin/oteltestbedcol_$(GOOS)_$(GOARCH)$(EXTENSION) \
 		-tags $(GO_BUILD_TAGS) -ldflags $(GO_BUILD_LDFLAGS) .
 
+.PHONY: genotelauditcol
+genotelauditcol:
+	./internal/buildscripts/ocb-add-replaces.sh otelauditcol
+	$(BUILDER) --skip-compilation --config cmd/otelauditcol/builder-config-replaced.yaml
+
+.PHONY: otelauditcol
+otelauditcol: genotelauditcol
+	cd ./cmd/otelauditcol && GO111MODULE=on CGO_ENABLED=0 $(GOCMD) build -trimpath -o ../../bin/otelauditcol_$(GOOS)_$(GOARCH)$(EXTENSION) \
+		-tags $(GO_BUILD_TAGS) .
+
 # Build the telemetrygen executable.
 .PHONY: telemetrygen
 telemetrygen:
