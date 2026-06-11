@@ -4,8 +4,8 @@ go 1.25.0
 
 require (
 	github.com/klauspost/compress v1.18.6
-	github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal v0.153.0
-	github.com/open-telemetry/opentelemetry-collector-contrib/internal/sharedcomponent v0.153.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal v0.154.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/internal/sharedcomponent v0.154.0
 	github.com/stretchr/testify v1.11.1
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	go.opentelemetry.io/collector/client v1.60.0
@@ -85,7 +85,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/text v0.38.0 // indirect
 	google.golang.org/grpc v1.81.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect

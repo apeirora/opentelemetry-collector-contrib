@@ -6,11 +6,11 @@ require (
 	github.com/distribution/reference v0.6.0
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
-	github.com/open-telemetry/opentelemetry-collector-contrib/internal/common v0.153.0
-	github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal v0.153.0
-	github.com/open-telemetry/opentelemetry-collector-contrib/internal/k8sconfig v0.153.0
-	github.com/open-telemetry/opentelemetry-collector-contrib/internal/sharedcomponent v0.153.0
-	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/xk8stest v0.153.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/internal/common v0.154.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal v0.154.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/internal/k8sconfig v0.154.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/internal/sharedcomponent v0.154.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/xk8stest v0.154.0
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/collector/client v1.60.0
 	go.opentelemetry.io/collector/component v1.60.0
@@ -134,7 +134,7 @@ require (
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/term v0.43.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/text v0.38.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/grpc v1.81.1 // indirect

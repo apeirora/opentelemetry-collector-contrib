@@ -3,12 +3,12 @@ module github.com/open-telemetry/opentelemetry-collector-contrib/connector/count
 go 1.25.0
 
 require (
-	github.com/open-telemetry/opentelemetry-collector-contrib/internal/filter v0.153.0
-	github.com/open-telemetry/opentelemetry-collector-contrib/internal/pdatautil v0.153.0
-	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/golden v0.153.0
-	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/ottl v0.153.0
-	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/pdatatest v0.153.0
-	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/pdatautil v0.153.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/internal/filter v0.154.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/internal/pdatautil v0.154.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/golden v0.154.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/ottl v0.154.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/pdatatest v0.154.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/pdatautil v0.154.0
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/collector/component v1.60.0
 	go.opentelemetry.io/collector/component/componenttest v0.154.0
@@ -64,7 +64,7 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal v0.153.0 // indirect
+	github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal v0.154.0 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/prometheus/client_golang v1.23.2 // indirect
@@ -139,7 +139,7 @@ require (
 	golang.org/x/exp v0.0.0-20260527015227-08cc5374adb3 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/text v0.38.0 // indirect
 	gonum.org/v1/gonum v0.17.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect

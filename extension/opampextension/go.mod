@@ -6,8 +6,8 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/open-telemetry/opamp-go v0.23.0
-	github.com/open-telemetry/opentelemetry-collector-contrib/extension/opampcustommessages v0.153.0
-	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/status v0.153.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/extension/opampcustommessages v0.154.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/status v0.154.0
 	github.com/shirou/gopsutil/v4 v4.26.5
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/collector/component v1.60.0
@@ -125,7 +125,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/text v0.37.0
+	golang.org/x/text v0.38.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )

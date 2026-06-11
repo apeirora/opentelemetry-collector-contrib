@@ -3,14 +3,14 @@ module github.com/open-telemetry/opentelemetry-collector-contrib/receiver/azuree
 go 1.25.0
 
 require (
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.21.1
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.22.0
 	github.com/Azure/azure-sdk-for-go/sdk/messaging/azeventhubs/v2 v2.0.2
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.7.0
 	github.com/goccy/go-json v0.10.6
-	github.com/open-telemetry/opentelemetry-collector-contrib/internal/sharedcomponent v0.153.0
-	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza v0.153.0
-	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/azure v0.153.0
-	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/azurelogs v0.153.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/internal/sharedcomponent v0.154.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza v0.154.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/azure v0.154.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/azurelogs v0.154.0
 	github.com/relvacode/iso8601 v1.7.0
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/collector/component v1.60.0
@@ -56,7 +56,7 @@ require (
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
-	github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal v0.153.0 // indirect
+	github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal v0.154.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/valyala/fastjson v1.6.10 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
@@ -74,8 +74,8 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/net v0.55.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/text v0.38.0 // indirect
 	gonum.org/v1/gonum v0.17.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260226221140-a57be14db171 // indirect
 	google.golang.org/grpc v1.81.1 // indirect

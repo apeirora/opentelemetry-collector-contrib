@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	// https://github.com/go-sql-driver/mysql/issues/1602; https://github.com/apache/doris/pull/32177
 	github.com/go-sql-driver/mysql v1.10.0
-	github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal v0.153.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal v0.154.0
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/collector/component v1.60.0
 	go.opentelemetry.io/collector/config/configopaque v1.60.0
@@ -92,7 +92,7 @@ require (
 	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/text v0.38.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260226221140-a57be14db171 // indirect
 	google.golang.org/grpc v1.81.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
