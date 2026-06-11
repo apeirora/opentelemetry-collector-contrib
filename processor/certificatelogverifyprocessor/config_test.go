@@ -61,3 +61,33 @@ func TestValidateHashChainWithStorage(t *testing.T) {
 		t.Fatalf("Validate returned error: %v", err)
 	}
 }
+
+func TestValidateDeadLetterRequiresStorage(t *testing.T) {
+	cfg := &Config{
+		Mode:        ModeSync,
+		HmacKeyFile: "hmac.key",
+		DeadLetter: DeadLetterConfig{
+			Enabled: true,
+		},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error")
+	}
+}
+
+func TestValidateDeadLetterWithStorage(t *testing.T) {
+	cfg := &Config{
+		Mode:        ModeSync,
+		HmacKeyFile: "hmac.key",
+		DeadLetter: DeadLetterConfig{
+			Enabled:   true,
+			StorageID: component.NewIDWithName(component.MustNewType("file_storage"), ""),
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate returned error: %v", err)
+	}
+	if cfg.DeadLetter.KeyPrefix != defaultDeadLetterKeyPrefix {
+		t.Fatalf("key_prefix = %q", cfg.DeadLetter.KeyPrefix)
+	}
+}

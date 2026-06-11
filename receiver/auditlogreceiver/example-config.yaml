@@ -35,6 +35,12 @@ processors:
     hash_chain:
       enabled: false
       storage: file_storage
+    dead_letter:
+      enabled: false
+      storage: file_storage
+      reasons:
+        - integrity_mismatch
+        - missing_integrity_value
 
 service:
   extensions: [file_storage]

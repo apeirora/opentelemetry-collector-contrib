@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/consumer/consumererror"
 	"go.opentelemetry.io/collector/extension/xextension/storage"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/processor"
 	"go.uber.org/zap"
@@ -38,12 +39,13 @@ const (
 )
 
 type certificateHashProcessor struct {
-	config    *Config
-	logger    *zap.Logger
-	nextLogs  consumer.Logs
-	hmacKey   []byte
-	cert      *x509.Certificate
-	hashChain *hashChainStore
+	config     *Config
+	logger     *zap.Logger
+	nextLogs   consumer.Logs
+	hmacKey    []byte
+	cert       *x509.Certificate
+	hashChain  *hashChainStore
+	deadLetter *deadLetterStore
 }
 
 func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settings) (*certificateHashProcessor, error) {
@@ -91,6 +93,7 @@ type verifiedRecord struct {
 
 func (p *certificateHashProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error {
 	var verificationErr error
+	var deadLetterErr error
 	verified := make([]verifiedRecord, 0)
 
 	resourceLogs := ld.ResourceLogs()
@@ -104,8 +107,9 @@ func (p *certificateHashProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs
 				}
 
 				if reason, err := p.verifyAuditLogRecord(resource, lr); err != nil {
-					p.markFailed(lr, reason, err)
-					p.logger.Error("Failed to verify audit log record", errString(err))
+					if dlErr := p.handleVerificationFailure(ctx, resource, lr, reason, err); dlErr != nil {
+						deadLetterErr = dlErr
+					}
 					verificationErr = fmt.Errorf("%s: %w", tier2RejectedVerify, err)
 					return p.config.FailureMode == FailureModeStrict
 				}
@@ -113,6 +117,9 @@ func (p *certificateHashProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs
 				if p.hashChain != nil {
 					integrityHash, err := integrityHashHex(lr)
 					if err != nil {
+						if dlErr := p.handleVerificationFailure(ctx, resource, lr, "hash_chain_compute_failed", err); dlErr != nil {
+							deadLetterErr = dlErr
+						}
 						verificationErr = fmt.Errorf("%s: %w", tier2RejectedVerify, err)
 						return p.config.FailureMode == FailureModeStrict
 					}
@@ -128,6 +135,10 @@ func (p *certificateHashProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs
 		})
 		return rl.ScopeLogs().Len() == 0
 	})
+
+	if deadLetterErr != nil && p.config.DeadLetter.ShouldFailOnStorageError() {
+		return consumererror.NewPermanent(fmt.Errorf("dead_letter_storage_failed: %w", deadLetterErr))
+	}
 
 	if verificationErr != nil && p.config.FailureMode == FailureModeStrict {
 		return consumererror.NewPermanent(verificationErr)
@@ -173,6 +184,21 @@ func (p *certificateHashProcessor) markPassed(lr plog.LogRecord) {
 	attrs.PutStr(lastStateChangeAtKey, now)
 }
 
+func (p *certificateHashProcessor) handleVerificationFailure(ctx context.Context, resource pcommon.Resource, lr plog.LogRecord, reason string, err error) error {
+	p.markFailed(lr, reason, err)
+	p.logger.Error("Failed to verify audit log record", errString(err))
+	if p.deadLetter == nil {
+		return nil
+	}
+	if dlErr := p.deadLetter.store(ctx, resource, lr, reason, err, p.config.FailureMode, p.config.VerificationProfile); dlErr != nil {
+		p.logger.Error("Failed to store record in dead letter queue", errString(dlErr))
+		if p.config.DeadLetter.ShouldFailOnStorageError() {
+			return dlErr
+		}
+	}
+	return nil
+}
+
 func (p *certificateHashProcessor) markFailed(lr plog.LogRecord, reason string, err error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	attrs := lr.Attributes()
@@ -187,27 +213,40 @@ func (p *certificateHashProcessor) markFailed(lr plog.LogRecord, reason string, 
 }
 
 func (p *certificateHashProcessor) Start(ctx context.Context, host component.Host) error {
-	if !p.config.HashChain.Enabled {
-		return nil
+	if p.config.HashChain.Enabled {
+		client, err := getStorageClient(ctx, host, p.config.HashChain.StorageID, "certificatelogverify-hashchain")
+		if err != nil {
+			return fmt.Errorf("failed to get hash chain storage client: %w", err)
+		}
+		p.hashChain = newHashChainStore(client)
 	}
 
+	if p.config.DeadLetter.Enabled {
+		client, err := getStorageClient(ctx, host, p.config.DeadLetter.StorageID, "certificatelogverify-deadletter")
+		if err != nil {
+			return fmt.Errorf("failed to get dead letter storage client: %w", err)
+		}
+		p.deadLetter = newDeadLetterStore(p.config.DeadLetter, client, p.logger)
+		p.logger.Info("Dead letter queue enabled",
+			zap.String("storage", p.config.DeadLetter.StorageID.String()),
+			zap.String("key_prefix", p.config.DeadLetter.effectiveKeyPrefix()),
+		)
+	}
+
+	return nil
+}
+
+func getStorageClient(ctx context.Context, host component.Host, storageID component.ID, clientName string) (storage.Client, error) {
 	extensions := host.GetExtensions()
-	storageExtension, exists := extensions[p.config.HashChain.StorageID]
+	storageExtension, exists := extensions[storageID]
 	if !exists {
-		return fmt.Errorf("hash chain storage extension %s not found", p.config.HashChain.StorageID)
+		return nil, fmt.Errorf("storage extension %s not found", storageID)
 	}
-
 	storageExt, ok := storageExtension.(storage.Extension)
 	if !ok {
-		return fmt.Errorf("storage extension %s does not implement storage.Extension", p.config.HashChain.StorageID)
+		return nil, fmt.Errorf("storage extension %s does not implement storage.Extension", storageID)
 	}
-
-	client, err := storageExt.GetClient(ctx, component.KindProcessor, p.config.HashChain.StorageID, "certificatelogverify")
-	if err != nil {
-		return fmt.Errorf("failed to get hash chain storage client: %w", err)
-	}
-	p.hashChain = newHashChainStore(client)
-	return nil
+	return storageExt.GetClient(ctx, component.KindProcessor, storageID, clientName)
 }
 
 func (p *certificateHashProcessor) Shutdown(ctx context.Context) error {

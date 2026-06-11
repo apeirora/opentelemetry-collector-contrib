@@ -1,14 +1,14 @@
 # Certificate Log Verify Processor
 
-The Certificate Log Verify Processor verifies the integrity and authenticity of log records that have been signed with a certificate. It reads certificate-signed logs, recomputes their hash, and verifies the signature using a certificate stored in Kubernetes secrets.
+The Certificate Log Verify Processor verifies Tier-2 audit log records by recomputing a JCS-canonical payload and checking `audit.integrity.value` against a configured HMAC key and/or certificate public key.
 
 ## Overview
 
 This processor:
-- Fetches certificates from Kubernetes secrets
-- Verifies log signatures by recomputing hashes based on the signed content (body/meta/attr)
-- Validates signatures using RSA public keys from certificates
-- Ensures log integrity and authenticity
+- Canonicalizes each log record using JCS (JSON Canonicalization Scheme)
+- Verifies `audit.integrity.value` using HMAC or asymmetric signature algorithms
+- Optionally validates hash-chain continuity (`audit.prev.hash`, `audit.sequence.number`) via storage
+- Stamps verification outcome attributes on each record (`verify_status`, `tier2_status`, etc.)
 
 ## Prerequisites
 
@@ -161,19 +161,153 @@ kubectl get svc -n otel-demo otelcol-certificatelogverify
 
 ### Configuration Options
 
-The processor configuration in `configmap.yaml` can be customized. Available options:
+Component type: `certificatelogverify`.
 
-- `hash_algorithm`: Hash algorithm used for verification (`SHA256` or `SHA512`). Default: `SHA256`
-- `sign_content`: What content was signed (`body`, `meta`, or `attr`). Default: `body`
-  - `body`: Only log body
-  - `meta`: Body + metadata (timestamp, severity, trace_id, span_id)
-  - `attr`: Body + metadata + attributes (excluding `otel.log.*` attributes)
-- `k8s_secret`: Kubernetes secret configuration
-  - `name`: Secret name (required)
-  - `namespace`: Secret namespace (default: `default`)
-  - `cert_key`: Key name in secret containing the certificate (required)
+#### Processor settings
 
-To update the configuration:
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `mode` | `sync` | `sync` verifies each record; `deferred` skips verification and marks records as deferred |
+| `failure_mode` | `strict` | `strict` drops failed records and fails the pipeline; `mark` annotates failures and continues |
+| `verification_profile` | `default` | Label written to `verification_profile` on each record; does not change verification logic |
+| `hmac_key_file` | — | Path to HMAC key file (required in `sync` mode unless cert or k8s key is set) |
+| `cert_file` | — | Path to PEM certificate for RSA/ECDSA verification |
+| `hash_chain.enabled` | `false` | Enable sequence and previous-hash chain validation |
+| `hash_chain.storage` | — | Storage extension ID (required when `hash_chain.enabled` is true) |
+
+#### Dead letter queue (`dead_letter`)
+
+Failed verification records can be persisted to any [storage extension](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/extension/storage): `file_storage`, `redis_storage`, `db_storage` (SQLite, PostgreSQL, etc.).
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `dead_letter.enabled` | `false` | Enable dead letter persistence for verification failures |
+| `dead_letter.storage` | — | Storage extension ID (required when enabled) |
+| `dead_letter.key_prefix` | `dead_letter/` | Key prefix for stored entries |
+| `dead_letter.include_record` | `true` | Store OTLP JSON for the failed log record |
+| `dead_letter.include_resource` | `true` | Store OTLP JSON for the resource attributes |
+| `dead_letter.reasons` | all | Only store failures matching these `verify_reason` values (empty = all) |
+| `dead_letter.failure_modes` | `strict`, `mark` | Store failures only when processor `failure_mode` is in this list |
+| `dead_letter.max_entry_size_bytes` | `0` | Reject DLQ writes above this size (`0` = unlimited) |
+| `dead_letter.fail_on_storage_error` | `false` | Fail the pipeline when DLQ storage write fails |
+| `dead_letter.partition_by_stream` | `false` | Key layout `prefix/{audit.source.id}/{entry_id}` |
+| `dead_letter.deduplicate_by_record_id` | `false` | Use `audit.record.id` as key instead of a new UUID (overwrites prior entry) |
+| `dead_letter.maintain_index` | `false` | Maintain `__dead_letter_index__` list of keys for enumeration |
+| `dead_letter.ttl` | `0` | Optional expiry hint written into each entry (`0` = none) |
+
+Each dead letter entry is JSON with metadata (`verify_reason`, `verify_details`, `audit_record_id`, `stream_id`, etc.) plus optional OTLP payloads for replay or inspection.
+
+Use `dead_letter.reasons` to filter which failures are stored. When omitted or empty, all failure reasons are stored. Possible `verify_reason` values:
+
+| Reason | When it occurs |
+|--------|----------------|
+| `missing_integrity_value` | `audit.integrity.value` is missing on the log record |
+| `missing_integrity_algorithm` | `audit.integrity.algorithm` is missing on the resource |
+| `canonicalization_failed` | JCS canonicalization of the audit record failed |
+| `canonical_payload_empty` | Canonical audit payload is empty after serialization |
+| `unsupported_integrity_algorithm` | `audit.integrity.algorithm` is not a supported value |
+| `hmac_key_unavailable` | HMAC algorithm required but no HMAC key is configured |
+| `certificate_unavailable` | Signature algorithm required but no certificate is configured |
+| `invalid_integrity_encoding` | `audit.integrity.value` is not valid hex or base64 |
+| `hmac_compute_failed` | Internal error while computing HMAC |
+| `hash_compute_failed` | Internal error while computing content hash for signature verification |
+| `integrity_mismatch` | HMAC or signature does not match the canonical payload |
+| `missing_stream_id` | Hash chain enabled but `audit.source.id` is missing |
+| `hash_chain_storage_error` | Hash chain state could not be read from storage |
+| `prev_hash_mismatch` | `audit.prev.hash` does not match the previous record in the chain |
+| `sequence_not_increasing` | `audit.sequence.number` is not greater than the previous sequence |
+| `unexpected_prev_hash` | `audit.prev.hash` is set but no prior record exists for the stream |
+| `hash_chain_compute_failed` | Integrity hash for hash-chain commit could not be computed |
+
+#### Kubernetes secret source (`k8s_secret`)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `k8s_secret.name` | — | Secret name (required when using k8s) |
+| `k8s_secret.namespace` | `default` | Secret namespace |
+| `k8s_secret.hmac_key_entry` | — | Secret key containing the HMAC key |
+| `k8s_secret.cert_key` | — | Secret key containing the certificate PEM |
+
+In `sync` mode, at least one key source must be configured: `hmac_key_file`, `cert_file`, or `k8s_secret` with `hmac_key_entry` and/or `cert_key`. `deferred` mode does not require keys.
+
+#### Example configuration
+
+```yaml
+processors:
+  certificatelogverify:
+    mode: sync
+    failure_mode: strict
+    verification_profile: default
+    hmac_key_file: /etc/otel/hmac.key
+    cert_file: /etc/otel/cert.pem
+    hash_chain:
+      enabled: false
+      storage: file_storage
+    dead_letter:
+      enabled: true
+      storage: file_storage
+      reasons:
+        - integrity_mismatch
+        - missing_integrity_value
+      partition_by_stream: true
+      fail_on_storage_error: false
+```
+
+Dead letter with PostgreSQL via `db_storage`:
+
+```yaml
+extensions:
+  db_storage:
+    driver: pgx
+    datasource: postgres://user:pass@localhost:5432/otel?sslmode=disable
+
+processors:
+  certificatelogverify:
+    mode: sync
+    failure_mode: mark
+    hmac_key_file: /etc/otel/hmac.key
+    dead_letter:
+      enabled: true
+      storage: db_storage
+      key_prefix: audit_verify_dlq/
+      maintain_index: true
+      max_entry_size_bytes: 1048576
+
+service:
+  extensions: [db_storage]
+```
+
+Or with Kubernetes secrets:
+
+```yaml
+processors:
+  certificatelogverify:
+    mode: sync
+    failure_mode: strict
+    k8s_secret:
+      name: otelcol-test-certs
+      namespace: otel-demo
+      hmac_key_entry: hmac.key
+      cert_key: cert.pem
+```
+
+#### Not configurable in the processor
+
+The following are **not** processor config fields. They are determined by log/resource attributes and fixed canonicalization logic:
+
+- **Integrity algorithm** — read from resource attribute `audit.integrity.algorithm`
+- **Signed content** — fixed JCS canonical form over audit fields, timestamps, body, and non-integrity attributes (see How It Works)
+
+Supported `audit.integrity.algorithm` values:
+
+| Algorithm | Key source required |
+|-----------|---------------------|
+| `HMAC-SHA256` | HMAC key |
+| `HMAC-SHA512` | HMAC key |
+| `ECDSA-P256-SHA256` | Certificate |
+| `RSA-PKCS1-SHA256` | Certificate |
+
+To update Kubernetes configuration:
 
 ```bash
 # Edit configmap.yaml, then apply
@@ -185,22 +319,43 @@ kubectl rollout restart deployment/otelcol-certificatelogverify -n otel-demo
 
 ## How It Works
 
-1. **Certificate Loading**: On startup, the processor fetches the certificate from the specified Kubernetes secret
-2. **Log Processing**: For each log record, it:
-   - Reads `otel.log.hash`, `otel.log.signature`, and `otel.log.sign_content` attributes
-   - Uses `sign_content` from the log attribute (set by the signing processor) or falls back to config
-   - Recomputes the hash using the same serialization logic as the signing processor
-   - Compares the recomputed hash with the received hash
-   - Verifies the signature using the certificate's RSA public key
-3. **Error Handling**: If verification fails, an error is logged and the log record continues processing
+1. **Key loading**: On startup in `sync` mode, loads HMAC key and/or certificate from file or Kubernetes secret.
+2. **Canonicalization**: Builds a fixed JCS payload from timestamp, observed timestamp, event name, standard `audit.*` fields, log body, and all attributes except `audit.integrity.*`.
+3. **Integrity verification**: Reads `audit.integrity.algorithm` from the resource and `audit.integrity.value` from the record, then verifies HMAC or signature against the canonical payload.
+4. **Hash chain** (optional): When enabled, validates `audit.prev.hash` and `audit.sequence.number` per `audit.source.id` stream using configured storage.
+5. **Outcome attributes**: Sets `verify_status`, `verify_reason`, `tier2_status`, `verification_profile`, and related fields on each record.
+6. **Dead letter** (optional): When enabled, failed records are serialized to configured storage before pipeline rejection/continuation.
+7. **Failure handling**:
+   - `failure_mode: strict` — failed records are removed; pipeline returns a permanent error containing `rejected_verify_failed`
+   - `failure_mode: mark` — failed records are annotated and passed downstream
 
 ## Expected Log Attributes
 
-The processor expects log records to have these attributes (set by the signing processor):
+### Required
 
-- `otel.log.hash`: Base64-encoded hash of the serialized log content
-- `otel.log.signature`: Base64-encoded RSA signature of the hash
-- `otel.log.sign_content`: Indicates what content was signed (`body`, `meta`, or `attr`)
+| Attribute | Location | Description |
+|-----------|----------|-------------|
+| `audit.integrity.algorithm` | Resource | One of `HMAC-SHA256`, `HMAC-SHA512`, `ECDSA-P256-SHA256`, `RSA-PKCS1-SHA256` |
+| `audit.integrity.value` | Log record | HMAC or signature (hex or base64) over the JCS canonical payload |
+
+### Optional (hash chain)
+
+| Attribute | Location | Description |
+|-----------|----------|-------------|
+| `audit.source.id` | Log record or resource | Stream identifier for hash-chain state |
+| `audit.prev.hash` | Log record | Previous record integrity hash in the chain |
+| `audit.sequence.number` | Log record | Monotonic sequence number per stream |
+
+### Written by the processor
+
+| Attribute | Description |
+|-----------|-------------|
+| `verify_status` | `passed`, `failed`, or `deferred` |
+| `verify_reason` | Machine-readable reason (e.g. `ok`, `integrity_mismatch`) |
+| `verify_details` | Error details when verification fails |
+| `verified_at` | RFC3339 timestamp of verification |
+| `verification_profile` | Copy of configured `verification_profile` |
+| `tier2_status` | Tier-2 lifecycle status (e.g. `verified_queued`, `rejected_verify_failed`) |
 
 ## Troubleshooting
 
@@ -225,9 +380,11 @@ kubectl get rolebinding otelcol-secret-reader -n otel-demo
 ### Verification Failures
 
 Check collector logs for detailed error messages. Common issues:
-- Hash mismatch: Signing and verification processors using different `sign_content` values
-- Signature verification failed: Certificate mismatch or corrupted signature
-- Missing attributes: Logs not processed by the signing processor first
+- `integrity_mismatch`: Canonical payload or key/cert does not match what the signer used
+- `unsupported_integrity_algorithm`: `audit.integrity.algorithm` is missing or not supported
+- `missing_integrity_value`: `audit.integrity.value` is absent on the record
+- `certificate_unavailable` / `hmac_key_unavailable`: Algorithm requires a key source that is not configured
+- `prev_hash_mismatch` / `sequence_not_increasing`: Hash chain validation failed
 
 ## Example: Complete Deployment
 
@@ -290,4 +447,4 @@ kubectl apply -k .
 
 ## Related Components
 
-This processor is designed to work with the certificate signing processor (on branch `signLogsInsideProcesor`) that adds the signature attributes to log records.
+This processor is designed to work with the audit log receiver (`auditlogreceiver`) and an upstream signing component that populates `audit.integrity.*` attributes using the same JCS canonicalization rules.

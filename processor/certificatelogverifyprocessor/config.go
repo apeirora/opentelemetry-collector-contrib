@@ -5,6 +5,8 @@ package certificatelogverifyprocessor // import "github.com/open-telemetry/opent
 
 import (
 	"errors"
+	"fmt"
+	"time"
 
 	"go.opentelemetry.io/collector/component"
 )
@@ -25,11 +27,17 @@ const (
 	FailureModeMark   = "mark"
 )
 
+const (
+	defaultDeadLetterKeyPrefix = "dead_letter/"
+)
+
 var (
-	errInvalidMode        = errors.New("mode must be sync or deferred")
-	errInvalidFailureMode = errors.New("failure_mode must be strict or mark")
-	errSyncNeedsKeySource   = errors.New("sync mode requires hmac_key_file, cert_file, or k8s_secret for integrity verification")
-	errHashChainNeedsStorage = errors.New("hash_chain.enabled requires hash_chain.storage")
+	errInvalidMode             = errors.New("mode must be sync or deferred")
+	errInvalidFailureMode      = errors.New("failure_mode must be strict or mark")
+	errSyncNeedsKeySource      = errors.New("sync mode requires hmac_key_file, cert_file, or k8s_secret for integrity verification")
+	errHashChainNeedsStorage   = errors.New("hash_chain.enabled requires hash_chain.storage")
+	errDeadLetterNeedsStorage  = errors.New("dead_letter.enabled requires dead_letter.storage")
+	errInvalidDeadLetterMode   = errors.New("dead_letter.failure_modes entries must be strict or mark")
 )
 
 type Config struct {
@@ -40,6 +48,23 @@ type Config struct {
 	CertFile            string           `mapstructure:"cert_file"`
 	K8sSecret           *K8sSecretConfig `mapstructure:"k8s_secret"`
 	HashChain           HashChainConfig  `mapstructure:"hash_chain"`
+	DeadLetter          DeadLetterConfig `mapstructure:"dead_letter"`
+}
+
+type DeadLetterConfig struct {
+	Enabled               bool         `mapstructure:"enabled"`
+	StorageID             component.ID `mapstructure:"storage"`
+	KeyPrefix             string       `mapstructure:"key_prefix"`
+	IncludeRecord         *bool        `mapstructure:"include_record"`
+	IncludeResource       *bool        `mapstructure:"include_resource"`
+	Reasons               []string     `mapstructure:"reasons"`
+	FailureModes          []string     `mapstructure:"failure_modes"`
+	MaxEntrySizeBytes     int          `mapstructure:"max_entry_size_bytes"`
+	FailOnStorageError    *bool        `mapstructure:"fail_on_storage_error"`
+	PartitionByStream     bool         `mapstructure:"partition_by_stream"`
+	DeduplicateByRecordID bool         `mapstructure:"deduplicate_by_record_id"`
+	MaintainIndex         bool         `mapstructure:"maintain_index"`
+	TTL                   time.Duration `mapstructure:"ttl"`
 }
 
 type HashChainConfig struct {
@@ -80,7 +105,7 @@ func (c *Config) Validate() error {
 	}
 
 	if c.Mode == ModeDeferred {
-		return nil
+		return c.DeadLetter.validate()
 	}
 
 	hasHMACKey := c.HmacKeyFile != "" || (c.K8sSecret != nil && c.K8sSecret.HMACKeyEntry != "")
@@ -102,7 +127,66 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	return c.DeadLetter.validate()
+}
+
+func (dl *DeadLetterConfig) validate() error {
+	if !dl.Enabled {
+		return nil
+	}
+	if dl.StorageID == (component.ID{}) {
+		return errDeadLetterNeedsStorage
+	}
+	if dl.KeyPrefix == "" {
+		dl.KeyPrefix = defaultDeadLetterKeyPrefix
+	}
+	for _, mode := range dl.FailureModes {
+		if mode != FailureModeStrict && mode != FailureModeMark {
+			return errInvalidDeadLetterMode
+		}
+	}
+	if dl.MaxEntrySizeBytes < 0 {
+		return fmt.Errorf("dead_letter.max_entry_size_bytes must be >= 0")
+	}
+	if dl.TTL < 0 {
+		return fmt.Errorf("dead_letter.ttl must be >= 0")
+	}
 	return nil
+}
+
+func (dl *DeadLetterConfig) ShouldIncludeRecord() bool {
+	if dl.IncludeRecord == nil {
+		return true
+	}
+	return *dl.IncludeRecord
+}
+
+func (dl *DeadLetterConfig) ShouldIncludeResource() bool {
+	if dl.IncludeResource == nil {
+		return true
+	}
+	return *dl.IncludeResource
+}
+
+func (dl *DeadLetterConfig) ShouldFailOnStorageError() bool {
+	if dl.FailOnStorageError == nil {
+		return false
+	}
+	return *dl.FailOnStorageError
+}
+
+func (dl *DeadLetterConfig) effectiveKeyPrefix() string {
+	if dl.KeyPrefix == "" {
+		return defaultDeadLetterKeyPrefix
+	}
+	return dl.KeyPrefix
+}
+
+func (dl *DeadLetterConfig) effectiveFailureModes() []string {
+	if len(dl.FailureModes) == 0 {
+		return []string{FailureModeStrict, FailureModeMark}
+	}
+	return dl.FailureModes
 }
 
 var _ component.Config = (*Config)(nil)
