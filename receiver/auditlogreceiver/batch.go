@@ -21,12 +21,17 @@ type failedAuditRecord struct {
 }
 
 type syncDeliveryResult struct {
-	accepted      int
-	failedRecords []failedAuditRecord
+	accepted        int
+	failedRecords   []failedAuditRecord
+	circuitDeferred bool
 }
 
 func (r *syncDeliveryResult) hasFailures() bool {
 	return len(r.failedRecords) > 0
+}
+
+func (r *syncDeliveryResult) isCircuitDeferred() bool {
+	return r.circuitDeferred
 }
 
 func (r *syncDeliveryResult) rejectedCount() int {

@@ -13,6 +13,7 @@ import (
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config/confighttp"
+	"go.opentelemetry.io/collector/config/confignet"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/plog/plogotlp"
@@ -41,20 +42,22 @@ func (*mockConsumer) Capabilities() consumer.Capabilities {
 }
 
 func testSyncConfig() *Config {
-	sc := confighttp.NewDefaultServerConfig()
-	sc.Endpoint = "localhost:0"
+	netAddr := confignet.NewDefaultAddrConfig()
+	netAddr.Transport = confignet.TransportTypeTCP
+	netAddr.Endpoint = "localhost:0"
 	return &Config{
-		ServerConfig: sc,
+		ServerConfig: confighttp.ServerConfig{NetAddr: netAddr},
 		StorageID:    component.NewIDWithName(component.MustNewType("file_storage"), ""),
 		ResponseMode: ResponseModeSync,
 	}
 }
 
 func testAsyncConfig() *Config {
-	sc := confighttp.NewDefaultServerConfig()
-	sc.Endpoint = "localhost:0"
+	netAddr := confignet.NewDefaultAddrConfig()
+	netAddr.Transport = confignet.TransportTypeTCP
+	netAddr.Endpoint = "localhost:0"
 	return &Config{
-		ServerConfig: sc,
+		ServerConfig: confighttp.ServerConfig{NetAddr: netAddr},
 		StorageID:    component.NewIDWithName(component.MustNewType("file_storage"), ""),
 		ResponseMode: ResponseModeAsync,
 		Delivery: DeliveryConfig{

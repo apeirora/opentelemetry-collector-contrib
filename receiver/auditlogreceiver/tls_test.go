@@ -14,6 +14,7 @@ import (
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config/confighttp"
+	"go.opentelemetry.io/collector/config/confignet"
 	"go.opentelemetry.io/collector/config/configoptional"
 	"go.opentelemetry.io/collector/config/configtls"
 	"go.opentelemetry.io/collector/extension"
@@ -71,12 +72,15 @@ func tlsTestConfig(addr string, mtls bool) *Config {
 		tlsCfg.ClientCAFile = "./testdata/tls/ca.crt"
 	}
 
-	sc := confighttp.NewDefaultServerConfig()
-	sc.Endpoint = addr
-	sc.TLS = configoptional.Some(tlsCfg)
+	netAddr := confignet.NewDefaultAddrConfig()
+	netAddr.Transport = confignet.TransportTypeTCP
+	netAddr.Endpoint = addr
 
 	return &Config{
-		ServerConfig: sc,
+		ServerConfig: confighttp.ServerConfig{
+			NetAddr: netAddr,
+			TLS:     configoptional.Some(tlsCfg),
+		},
 		StorageID:    component.NewIDWithName(component.MustNewType("file_storage"), ""),
 		ResponseMode: ResponseModeSync,
 	}

@@ -1,30 +1,105 @@
+# Configuration of whole flow (SDK testapp + collector + backend)
+#
+# 1) Split durability by failure type — when the collector is reachable, it owns
+#    durability (receiver WAL + sync pipeline). SDK store/retry is only for when
+#    the collector is unreachable (connection failure, timeout). Do not persist and
+#    retry on both sides for the same record; HTTP 200/400/503 from a reachable
+#    collector are handled synchronously by the app, not queued in the SDK.
+#
+# 2) Async is unsafe for now — stay sync end-to-end:
+#    SDK: synchronous export when collector is reachable (WaitOnExport); store-and-retry
+#    only when collector is unreachable (-filestore for durable offline recovery)
+#    Receiver: response_mode sync — blocks until pipeline finishes, returns 200/400/503.
+#              Do NOT use response_mode async (that mode returns 202 immediately and
+#              delivers in a background worker).
+#    Processor: certificatelogverify only (no other processors — no batch/attributes/transform/filter)
+#    Exporters: sending_queue.enabled false (no background export queue)
+#
+# 3) SDK store — always required (in-memory default; -filestore when collector may
+#    be offline). Persist to store only on connection failure, not on HTTP rejections
+#    from a reachable collector. Collector owns crash recovery via receiver WAL.
+#    SDK store is separate from collector redis extensions below (app-side prefix/DB).
+#
+# 4) Collector receiver storage = WAL only — written before pipeline delivery,
+#    deleted on success; recoverSyncPending on restart. Not a competing retry worker.
+#
+# 5) Propagate backend failures to the SDK — sending_queue false lets inline
+#    retry_on_failure run inside the HTTP request (bounded by max_elapsed_time).
+#    503 to the SDK means end-to-end delivery failed; the app must handle it.
+#
+# 6) HTTP semantics — 200 = verified and exported through full sync pipeline.
+#    400 = integrity rejected (permanent). 503 = transient pipeline/backend failure.
+#
+# 7) Avoid — SDK durable backlog replay while collector is up and reachable;
+#    collector response_mode async without clear handoff at 202; exporter
+#    sending_queue with storage competing with SDK offline store.
+#
+# 8) Split collector storage namespaces (pitfall h):
+#    redis_storage/wal      — auditlogreceiver sync WAL only (pending/, __pending_keys__)
+#    redis_storage/audit_meta — certificatelogverify DLQ + hash chain (separate Redis DB)
+#    Do not enable sending_queue on audit exporters. SDK offline store stays app-side.
+#
+# 9) Sink idempotency — at-least-once delivery (WAL, SDK store, rare delete-after-success
+#    failures) means downstream sinks must dedupe on audit.record.id. Monitor WAL logs
+#    listed in receiver/README.md (Stored/Cleared/retained/delete-failed messages).
+#
+# 10) Circuit breaker open_behavior (sync only, pitfall l):
+#     reject (default) — 503, no WAL; SDK retries when collector reachable.
+#     accept — WAL + 202, deferred delivery via recoverSyncPending when circuit closes.
+#
+# 11) Verify failures (n) — HTTP 400 when all records fail; certificatelogverify DLQ
+#     stores failed records (dead_letter.enabled). Corrupt WAL (o) — receiver logs Error
+#     and stores raw bytes in dead_letter/corrupt_* under WAL storage.
+#
+# 12) Multi-instance (r) — each collector replica gets its own Redis db pair (or file dir);
+#     e.g. replica A db 0+1, replica B db 2+3. Within one instance keep WAL vs audit_meta split (h).
+#
+# 13) Hash chain — experimental; keep hash_chain.enabled: false (pitfalls 3.4–3.6, w–z).
+#
+# This file implements: collector reachable → sync pipeline + WAL; SDK sync export.
+
 extensions:
-  file_storage:
-    directory: ./storage
-    create_directory: true
-    timeout: 1s
-    compaction:
-      on_start: true
-      directory: ./storage/compaction
-      max_transaction_size: 1000
+  redis_storage/wal:
+    endpoint: 127.0.0.1:6379
+    db: 0
+    tls:
+      insecure: true
+  redis_storage/audit_meta:
+    endpoint: 127.0.0.1:6379
+    db: 1
+    tls:
+      insecure: true
 
 receivers:
   auditlogreceiver:
     endpoint: 0.0.0.0:4310
     path: /v1/audit
     response_mode: sync
-    storage: file_storage
+    storage: redis_storage/wal
     tls:
-      cert_file: /etc/otel/certs/server.crt
-      key_file: /etc/otel/certs/server.key
-      client_ca_file: /etc/otel/certs/ca.crt
+      cert_file: receiver/auditlogreceiver/testdata/tls/server.crt
+      key_file: receiver/auditlogreceiver/testdata/tls/server.key
+      client_ca_file: receiver/auditlogreceiver/testdata/tls/ca.crt
       min_version: "1.2"
     circuit_breaker:
       enabled: true
+      open_behavior: reject
 
 exporters:
   debug:
     verbosity: detailed
+    sending_queue:
+      enabled: false
+  otlp_http/test_standalone:
+    endpoint: http://localhost:9999
+    timeout: 8s
+    sending_queue:
+      enabled: false
+    retry_on_failure:
+      enabled: true
+      initial_interval: 500ms
+      max_interval: 2s
+      max_elapsed_time: 8s
 
 processors:
   certificatelogverify:
@@ -34,18 +109,20 @@ processors:
     cert_file: processor/certificatelogverifyprocessor/k8s/certificates/cert.pem
     hash_chain:
       enabled: false
-      storage: file_storage
+      storage: redis_storage/audit_meta
     dead_letter:
-      enabled: false
-      storage: file_storage
-      reasons:
-        - integrity_mismatch
-        - missing_integrity_value
+      enabled: true
+      storage: redis_storage/audit_meta
+      key_prefix: audit_verify_dlq/
+      # ttl is a JSON metadata hint only — storage does not auto-delete; run an external sweeper.
+      ttl: 1h
+      # Production: set true so a DLQ write failure fails the request instead of log-only loss.
+      fail_on_storage_error: true
 
 service:
-  extensions: [file_storage]
+  extensions: [redis_storage/wal, redis_storage/audit_meta]
   pipelines:
-    logs:
+    logs/audit:
       receivers: [auditlogreceiver]
       processors: [certificatelogverify]
-      exporters: [debug]
+      exporters: [debug, otlp_http/test_standalone]

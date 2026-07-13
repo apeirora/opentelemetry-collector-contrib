@@ -154,10 +154,10 @@ func (r *auditLogReceiver) Start(ctx context.Context, host component.Host) error
 
 	ln, err := r.cfg.ToListener(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to bind to address %s: %w", r.cfg.Endpoint, err)
+		return fmt.Errorf("failed to bind to address %s: %w", r.cfg.NetAddr.Endpoint, err)
 	}
 
-	r.server, err = r.cfg.ToServer(ctx, host, r.settings.TelemetrySettings, mux)
+	r.server, err = r.cfg.ToServer(ctx, host.GetExtensions(), r.settings.TelemetrySettings, mux)
 	if err != nil {
 		return err
 	}
@@ -254,8 +254,7 @@ func (r *auditLogReceiver) processPendingLogs() {
 
 		var entry pendingAuditEntry
 		if err := json.Unmarshal(data, &entry); err != nil {
-			r.logger.Warn("Discarding corrupt pending entry", zap.String("key", key), errString(err))
-			_ = r.deletePendingEntry(key)
+			r.handleCorruptPendingEntry(key, data, err)
 			continue
 		}
 
@@ -302,7 +301,10 @@ func (r *auditLogReceiver) deliverPendingEntry(key string, entry *pendingAuditEn
 	}
 
 	if err := r.deletePendingEntry(key); err != nil {
-		r.logger.Error("Delivered but failed to delete pending entry", zap.String("key", key), errString(err))
+		r.logger.Error("Delivered but failed to delete pending entry; downstream sinks must dedupe on audit.record.id",
+			zap.String("pending_key", key),
+			errString(err),
+		)
 	}
 	r.logger.Info("Successfully delivered pending audit log", zap.String("key", key))
 	return nil
@@ -340,6 +342,48 @@ func (r *auditLogReceiver) moveToDeadLetter(key string, entry *pendingAuditEntry
 		return err
 	}
 	return r.deletePendingEntry(key)
+}
+
+func corruptDeadLetterID(pendingKey string) string {
+	id := strings.TrimPrefix(pendingKey, pendingKeyPrefix)
+	if id == "" {
+		id = uuid.New().String()
+	}
+	return "corrupt_" + id
+}
+
+func (r *auditLogReceiver) moveCorruptPendingToDeadLetter(key string, rawData []byte, cause error) error {
+	dlID := corruptDeadLetterID(key)
+	payload, err := json.Marshal(struct {
+		PendingKey string `json:"pending_key"`
+		RawData    []byte `json:"raw_data"`
+		Error      string `json:"error"`
+	}{key, rawData, cause.Error()})
+	if err != nil {
+		return err
+	}
+	if err := r.storage.Set(context.Background(), deadLetterKeyPrefix+dlID, payload); err != nil {
+		return err
+	}
+	return r.deletePendingEntry(key)
+}
+
+func (r *auditLogReceiver) handleCorruptPendingEntry(key string, rawData []byte, cause error) {
+	dlKey := deadLetterKeyPrefix + corruptDeadLetterID(key)
+	if err := r.moveCorruptPendingToDeadLetter(key, rawData, cause); err != nil {
+		r.logger.Error("Failed to move corrupt WAL entry to dead letter",
+			zap.String("pending_key", key),
+			zap.String("dead_letter_key", dlKey),
+			errString(cause),
+			errString(err),
+		)
+		return
+	}
+	r.logger.Error("Corrupt WAL entry moved to dead letter",
+		zap.String("pending_key", key),
+		zap.String("dead_letter_key", dlKey),
+		errString(cause),
+	)
 }
 
 func (r *auditLogReceiver) calculateRetryDelay(attempt int) time.Duration {
@@ -421,27 +465,54 @@ func (r *auditLogReceiver) persistPendingLogs(logs plog.Logs) (string, error) {
 	if err := r.storePendingEntry(key, entryData); err != nil {
 		return "", err
 	}
+	r.logger.Info("Stored sync WAL entry",
+		zap.String("pending_key", key),
+		zap.Int("log_records", logs.LogRecordCount()),
+	)
 	return key, nil
 }
 
 func (r *auditLogReceiver) syncDeliver(ctx context.Context, logs plog.Logs) (*syncDeliveryResult, error) {
+	if err := r.checkCircuitForRequest(); err != nil {
+		if r.cfg.CircuitBreaker.OpenBehaviorMode() == CircuitOpenAccept {
+			pendingKey, perr := r.persistPendingLogs(logs)
+			if perr != nil {
+				return nil, perr
+			}
+			r.logger.Info("Circuit open; stored WAL entry and deferred delivery",
+				zap.String("pending_key", pendingKey),
+				zap.Int("log_records", logs.LogRecordCount()),
+			)
+			return &syncDeliveryResult{circuitDeferred: true}, nil
+		}
+		return nil, err
+	}
+
 	pendingKey, err := r.persistPendingLogs(logs)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := r.checkCircuitForRequest(); err != nil {
-		return nil, err
-	}
-
 	result, err := r.deliverLogsByRecord(ctx, logs)
 	if err != nil {
+		r.logger.Warn("Sync delivery failed, WAL entry retained for recovery",
+			zap.String("pending_key", pendingKey),
+			errString(err),
+		)
 		return nil, err
 	}
 
 	if err := r.deletePendingEntry(pendingKey); err != nil {
-		r.logger.Error("Delivered but failed to delete pending entry", zap.String("key", pendingKey), errString(err))
+		r.logger.Error("Delivered but failed to delete pending entry; downstream sinks must dedupe on audit.record.id",
+			zap.String("pending_key", pendingKey),
+			errString(err),
+		)
+		return result, nil
 	}
+	r.logger.Info("Cleared sync WAL entry after successful delivery",
+		zap.String("pending_key", pendingKey),
+		zap.Int("accepted_records", result.accepted),
+	)
 	return result, nil
 }
 
@@ -492,8 +563,7 @@ func (r *auditLogReceiver) recoverSyncPending() {
 
 		var entry pendingAuditEntry
 		if err := json.Unmarshal(data, &entry); err != nil {
-			r.logger.Warn("Discarding corrupt pending entry", zap.String("key", key), errString(err))
-			_ = r.deletePendingEntry(key)
+			r.handleCorruptPendingEntry(key, data, err)
 			continue
 		}
 
@@ -506,13 +576,23 @@ func (r *auditLogReceiver) recoverSyncPending() {
 		if err := r.deliverLogs(context.Background(), logs); err != nil {
 			if isDiscardableProcessingError(err) {
 				_ = r.moveToDeadLetter(key, &entry, err)
+				continue
 			}
+			r.logger.Warn("Recovery delivery failed, WAL entry retained",
+				zap.String("pending_key", key),
+				errString(err),
+			)
 			continue
 		}
 
 		if err := r.deletePendingEntry(key); err != nil {
-			r.logger.Error("Recovered but failed to delete pending entry", zap.String("key", key), errString(err))
+			r.logger.Error("Recovered but failed to delete pending entry; downstream sinks must dedupe on audit.record.id",
+				zap.String("pending_key", key),
+				errString(err),
+			)
+			continue
 		}
+		r.logger.Info("Recovered and cleared sync WAL entry", zap.String("pending_key", key))
 	}
 }
 
@@ -713,6 +793,12 @@ func (r *auditLogReceiver) handleOTLP(w http.ResponseWriter, req *http.Request, 
 		r.logger.Error("Sync delivery failed", errString(err))
 		writeAuditHTTPError(w, err)
 		r.obsrecv.EndLogsOp(ctx, format, numRecords, err)
+		return
+	}
+
+	if result.isCircuitDeferred() {
+		r.writeOTLPResponse(w, isProto, http.StatusAccepted)
+		r.obsrecv.EndLogsOp(ctx, format, numRecords, nil)
 		return
 	}
 

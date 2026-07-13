@@ -385,4 +385,71 @@ func TestSyncCircuitBreakerOpenReturns503(t *testing.T) {
 	if len(sink.logs) != 0 {
 		t.Fatalf("circuit open must block delivery, consumer got %d batches", len(sink.logs))
 	}
+	keys, err := r.getPendingKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("circuit open reject must not write WAL, got %d keys", len(keys))
+	}
+}
+
+func TestSyncCircuitBreakerOpenAcceptReturns202(t *testing.T) {
+	t.Parallel()
+	cfg := testSyncConfig()
+	enabled := true
+	cfg.CircuitBreaker.Enabled = &enabled
+	cfg.CircuitBreaker.CircuitOpenThreshold = 1
+	cfg.CircuitBreaker.OpenBehavior = CircuitOpenAccept
+
+	sink := &mockConsumer{}
+	r := newTestReceiver(t, cfg, sink, true)
+	r.circuitBreaker.RecordFailure()
+
+	w := postSyncOTLP(t, r, testOTLPRequest(t), "application/x-protobuf")
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("circuit open accept: expected 202, got %d body=%s", w.Code, w.Body.String())
+	}
+	if len(sink.logs) != 0 {
+		t.Fatalf("circuit open accept must defer delivery, consumer got %d batches", len(sink.logs))
+	}
+	keys, err := r.getPendingKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("circuit open accept must write WAL, got %d keys", len(keys))
+	}
+}
+
+func TestSyncRecoverCorruptWALMovesToDeadLetter(t *testing.T) {
+	t.Parallel()
+	sink := &mockConsumer{}
+	r := newTestReceiver(t, testSyncConfig(), sink, true)
+
+	corruptKey := pendingKeyPrefix + "bad-id"
+	if err := r.storePendingEntry(corruptKey, []byte(`{not-json`)); err != nil {
+		t.Fatal(err)
+	}
+
+	r.recoverSyncPending()
+
+	if len(sink.logs) != 0 {
+		t.Fatalf("corrupt WAL must not deliver to pipeline, got %d batches", len(sink.logs))
+	}
+	keys, err := r.getPendingKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("corrupt WAL pending key should be removed, got %d keys", len(keys))
+	}
+	dlKey := deadLetterKeyPrefix + "corrupt_bad-id"
+	dlData, err := r.storage.Get(context.Background(), dlKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dlData == nil {
+		t.Fatalf("expected dead letter at %s", dlKey)
+	}
 }

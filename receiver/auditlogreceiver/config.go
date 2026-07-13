@@ -16,7 +16,11 @@ const (
 	ResponseModeSync  = "sync"
 	ResponseModeAsync = "async"
 
-	defaultResponseMode    = ResponseModeSync
+	CircuitOpenReject = "reject"
+	CircuitOpenAccept = "accept"
+
+	defaultResponseMode         = ResponseModeSync
+	defaultCircuitOpenBehavior  = CircuitOpenReject
 	defaultDeliveryInitial = 1 * time.Second
 	defaultDeliveryMax     = 5 * time.Minute
 	defaultProcessInterval = 5 * time.Second
@@ -24,9 +28,10 @@ const (
 )
 
 var (
-	errStorageRequired     = errors.New("storage extension is required")
-	errInvalidResponseMode = errors.New("response_mode must be sync or async")
-	errEmptyEndpoint       = errors.New("endpoint must be specified")
+	errStorageRequired            = errors.New("storage extension is required")
+	errInvalidResponseMode        = errors.New("response_mode must be sync or async")
+	errInvalidCircuitOpenBehavior = errors.New("circuit_breaker.open_behavior must be reject or accept")
+	errEmptyEndpoint              = errors.New("endpoint must be specified")
 )
 
 type Config struct {
@@ -63,6 +68,10 @@ type CircuitBreakerConfig struct {
 	CircuitOpenThreshold int `mapstructure:"circuit_open_threshold"`
 
 	CircuitOpenDuration time.Duration `mapstructure:"circuit_open_duration"`
+
+	// OpenBehavior controls sync-mode ingest when the circuit is open:
+	// reject (default) returns 503 without WAL; accept persists to WAL and returns 202.
+	OpenBehavior string `mapstructure:"open_behavior"`
 }
 
 func (cb *CircuitBreakerConfig) IsEnabled() bool {
@@ -70,6 +79,13 @@ func (cb *CircuitBreakerConfig) IsEnabled() bool {
 		return true
 	}
 	return *cb.Enabled
+}
+
+func (cb *CircuitBreakerConfig) OpenBehaviorMode() string {
+	if cb.OpenBehavior == "" {
+		return defaultCircuitOpenBehavior
+	}
+	return cb.OpenBehavior
 }
 
 func (cb *CircuitBreakerConfig) applyDefaults() {
@@ -82,7 +98,7 @@ func (cb *CircuitBreakerConfig) applyDefaults() {
 }
 
 func (c *Config) Validate() error {
-	if c.Endpoint == "" {
+	if c.NetAddr.Endpoint == "" {
 		return errEmptyEndpoint
 	}
 
@@ -97,6 +113,10 @@ func (c *Config) Validate() error {
 	}
 
 	c.CircuitBreaker.applyDefaults()
+
+	if ob := c.CircuitBreaker.OpenBehaviorMode(); ob != CircuitOpenReject && ob != CircuitOpenAccept {
+		return errInvalidCircuitOpenBehavior
+	}
 
 	if c.Delivery.InitialInterval == 0 {
 		c.Delivery.InitialInterval = defaultDeliveryInitial

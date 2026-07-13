@@ -193,11 +193,25 @@ Failed verification records can be persisted to any [storage extension](https://
 | `dead_letter.partition_by_stream` | `false` | Key layout `prefix/{audit.source.id}/{entry_id}` |
 | `dead_letter.deduplicate_by_record_id` | `false` | Use `audit.record.id` as key instead of a new UUID (overwrites prior entry) |
 | `dead_letter.maintain_index` | `false` | Maintain `__dead_letter_index__` list of keys for enumeration |
-| `dead_letter.ttl` | `0` | Optional expiry hint written into each entry (`0` = none) |
+| `dead_letter.ttl` | `0` | Optional expiry hint written into each entry (`0` = none); **does not delete keys** — use an external sweeper |
 
 Each dead letter entry is JSON with metadata (`verify_reason`, `verify_details`, `audit_record_id`, `stream_id`, etc.) plus optional OTLP payloads for replay or inspection.
 
-Use `dead_letter.reasons` to filter which failures are stored. When omitted or empty, all failure reasons are stored. Possible `verify_reason` values:
+#### DLQ operator pitfalls
+
+These are design constraints, not verification bugs. See also `AUDITLOG_PIPELINE_PITFALLS.md` §3.13.
+
+| Pitfall | What happens | Operator action |
+|---------|--------------|-----------------|
+| `fail_on_storage_error: false` (default) | DLQ write error is logged; pipeline may still return 400 or continue without a stored copy | Set `fail_on_storage_error: true` when DLQ loss is unacceptable |
+| `deduplicate_by_record_id: true` | Key is `audit.record.id`; **overwrites** prior entry for the same ID | Keep `false` unless last-failure-wins is intended; requires `audit.record.id` |
+| `partition_by_stream: true` | Key is `prefix/{audit.source.id}/{id}` | Enable only when `audit.source.id` is always present |
+| `maintain_index: true` | Maintains `__dead_letter_index__` via read-modify-write; not safe across replicas | Keep `false` in HA; enumerate with storage `SCAN` on `key_prefix` |
+| `ttl` set | `ttl` field in JSON only — **no auto-expiry** in Redis/file storage | Run external cleanup by `stored_at` or `ttl` hint |
+| `max_entry_size_bytes` | Oversized JSON rejected; may fail pipeline if `fail_on_storage_error: true` | Cap size; set `include_record: false` for large bodies |
+| Shared backend | WAL, hash chain, and DLQ keys can collide without prefixes / separate db | Use `key_prefix: audit_verify_dlq/` and separate Redis db (see `example-config.yaml`) |
+
+Use `dead_letter.reasons` to filter which failures are stored. When omitted or empty, all failure reasons are stored. See [§3.14 in pitfalls doc](../../AUDITLOG_PIPELINE_PITFALLS.md) for filter semantics. Possible `verify_reason` values:
 
 | Reason | When it occurs |
 |--------|----------------|
@@ -246,11 +260,12 @@ processors:
     dead_letter:
       enabled: true
       storage: file_storage
+      key_prefix: audit_verify_dlq/
       reasons:
         - integrity_mismatch
         - missing_integrity_value
       partition_by_stream: true
-      fail_on_storage_error: false
+      fail_on_storage_error: true
 ```
 
 Dead letter with PostgreSQL via `db_storage`:
@@ -317,10 +332,30 @@ kubectl apply -f configmap.yaml
 kubectl rollout restart deployment/otelcol-certificatelogverify -n otel-demo
 ```
 
+## Key and certificate loading
+
+HMAC keys and verification certificates are loaded **once at processor startup** (sync mode). There is **no hot reload** — updating `hmac_key_file`, `cert_file`, or a mounted Kubernetes secret does not affect a running collector until it restarts.
+
+On startup the processor logs:
+
+- `Loaded HMAC key for audit log verification` (with `source`)
+- `Loaded certificate for audit log signature verification` (with `source`)
+- `Audit integrity verification ready` with `hmac_key_loaded`, `certificate_loaded`, and `supported_algorithms`
+
+If only one key type is configured, a **Warn** lists algorithms that will be rejected at ingest (configure both HMAC key and cert when apps may use either).
+
+**Key rotation runbook**
+
+1. Update the secret or key file (same material the SDK will use to sign).
+2. **Rolling restart** collector pods so each instance reloads keys at startup.
+3. Roll SDK/applications to the same new key.
+
+Coordinate SDK and collector rotation: if apps sign with a new key before collectors restart, records fail verify with `integrity_mismatch` until pods pick up the new material.
+
 ## How It Works
 
-1. **Key loading**: On startup in `sync` mode, loads HMAC key and/or certificate from file or Kubernetes secret.
-2. **Canonicalization**: Builds a fixed JCS payload from timestamp, observed timestamp, event name, standard `audit.*` fields, log body, and all attributes except `audit.integrity.*`.
+1. **Key loading**: On startup in `sync` mode only — see [Key and certificate loading](#key-and-certificate-loading). No periodic reload.
+2. **Canonicalization**: Builds a fixed JCS payload from timestamp, observed timestamp, event name, standard `audit.*` fields, log body, and all attributes except `audit.integrity.*`. See [Canonical attribute encoding](#canonical-attribute-encoding).
 3. **Integrity verification**: Reads `audit.integrity.algorithm` from the resource and `audit.integrity.value` from the record, then verifies HMAC or signature against the canonical payload.
 4. **Hash chain** (optional): When enabled, validates `audit.prev.hash` and `audit.sequence.number` per `audit.source.id` stream using configured storage.
 5. **Outcome attributes**: Sets `verify_status`, `verify_reason`, `tier2_status`, `verification_profile`, and related fields on each record.
@@ -329,6 +364,49 @@ kubectl rollout restart deployment/otelcol-certificatelogverify -n otel-demo
    - `failure_mode: strict` — failed records are removed; pipeline returns a permanent error containing `rejected_verify_failed`
    - `failure_mode: mark` — failed records are annotated and passed downstream
 
+## Canonical attribute encoding
+
+JCS signing includes custom log attributes in an `attributes` array. Each value is converted with `canonicalAttrString` (`jcs_audit.go`) using the same rules as the Go SDK `log.Value.String()` for primitives:
+
+| OTLP type | Canonical string |
+|-----------|------------------|
+| String | as-is |
+| Int | decimal (`strconv.FormatInt`) |
+| Bool | `true` / `false` |
+| Double | `%g` format (`strconv.FormatFloat`) |
+
+**Contract (Tier-2):** Prefer **string** attributes for custom signed fields when using `go.opentelemetry.io/otel/sdk/auditlog`. The SDK exports audit fields as strings by default. Int/bool/double are supported when OTLP types match what the signer used; map/slice/bytes encoding is not a supported signing contract — use strings for custom metadata.
+
+`audit.sequence.number` remains a JSON **number** in the canonical payload (not stringified).
+
+## Integrity value encoding
+
+`audit.integrity.value` holds the HMAC or signature bytes as a string (not part of the JCS signed payload). The processor decodes with `decodeHexOrBase64` (`audit_verify.go`): **hex first**, then **base64**.
+
+| Source | Encoding |
+|--------|----------|
+| Go SDK (`go.opentelemetry.io/otel/sdk/auditlog`) | **Base64** (default) |
+| Processor | Accepts **hex or base64** |
+
+Use **base64** in production to match the SDK. Hex is supported for tests and custom signers. Invalid encoding → `invalid_integrity_encoding`; wrong proof → `integrity_mismatch`.
+
+## Post-verify outcome attributes
+
+After verification, the processor **mutates** each record and adds outcome metadata (not part of the signed JCS payload). Outcome keys are excluded from canonicalization in `jcs_audit.go` (`isExcludedFromJCS`).
+
+| Attribute | Description |
+|-----------|-------------|
+| `verify_status` | `passed`, `failed`, or `deferred` |
+| `verify_reason` | Machine-readable reason (e.g. `ok`, `integrity_mismatch`) |
+| `verify_details` | Error details when verification fails |
+| `verified_at` | RFC3339 timestamp of verification (empty when deferred) |
+| `verification_profile` | Copy of configured `verification_profile` |
+| `tier2_status` | Tier-2 lifecycle status (e.g. `verified_queued`, `rejected_verify_failed`) |
+| `export_status_overall` | Mirrors `tier2_status` for export routing |
+| `last_state_change_at` | RFC3339 timestamp when outcome attrs were written |
+
+**Sink contract:** expect these fields on exported audit records. With `failure_mode: mark`, filter on `verify_status` / `tier2_status` before durable storage if you only want verified records.
+
 ## Expected Log Attributes
 
 ### Required
@@ -336,7 +414,7 @@ kubectl rollout restart deployment/otelcol-certificatelogverify -n otel-demo
 | Attribute | Location | Description |
 |-----------|----------|-------------|
 | `audit.integrity.algorithm` | Resource | One of `HMAC-SHA256`, `HMAC-SHA512`, `ECDSA-P256-SHA256`, `RSA-PKCS1-SHA256` |
-| `audit.integrity.value` | Log record | HMAC or signature (hex or base64) over the JCS canonical payload |
+| `audit.integrity.value` | Log record | HMAC or signature over the JCS canonical payload; **base64** (SDK default) or hex |
 
 ### Optional (hash chain)
 
@@ -345,6 +423,8 @@ kubectl rollout restart deployment/otelcol-certificatelogverify -n otel-demo
 | `audit.source.id` | Log record or resource | Stream identifier for hash-chain state |
 | `audit.prev.hash` | Log record | Previous record integrity hash in the chain |
 | `audit.sequence.number` | Log record | Monotonic sequence number per stream |
+
+Outcome attributes (`verify_status`, `tier2_status`, etc.) are written by the processor after verification — see [Post-verify outcome attributes](#post-verify-outcome-attributes).
 
 ### Written by the processor
 
@@ -356,6 +436,8 @@ kubectl rollout restart deployment/otelcol-certificatelogverify -n otel-demo
 | `verified_at` | RFC3339 timestamp of verification |
 | `verification_profile` | Copy of configured `verification_profile` |
 | `tier2_status` | Tier-2 lifecycle status (e.g. `verified_queued`, `rejected_verify_failed`) |
+| `export_status_overall` | Mirrors `tier2_status` for export routing |
+| `last_state_change_at` | RFC3339 timestamp when outcome attrs were written |
 
 ## Troubleshooting
 

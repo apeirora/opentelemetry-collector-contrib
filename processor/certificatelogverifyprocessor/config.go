@@ -108,8 +108,8 @@ func (c *Config) Validate() error {
 		return c.DeadLetter.validate()
 	}
 
-	hasHMACKey := c.HmacKeyFile != "" || (c.K8sSecret != nil && c.K8sSecret.HMACKeyEntry != "")
-	hasCert := c.CertFile != "" || (c.K8sSecret != nil && c.K8sSecret.CertKeyEntry != "")
+	hasHMACKey := c.hasHMACKeySource()
+	hasCert := c.hasCertKeySource()
 	if !hasHMACKey && !hasCert {
 		return errSyncNeedsKeySource
 	}
@@ -128,6 +128,14 @@ func (c *Config) Validate() error {
 	}
 
 	return c.DeadLetter.validate()
+}
+
+func (c *Config) hasHMACKeySource() bool {
+	return c.HmacKeyFile != "" || (c.K8sSecret != nil && c.K8sSecret.HMACKeyEntry != "")
+}
+
+func (c *Config) hasCertKeySource() bool {
+	return c.CertFile != "" || (c.K8sSecret != nil && c.K8sSecret.CertKeyEntry != "")
 }
 
 func (dl *DeadLetterConfig) validate() error {

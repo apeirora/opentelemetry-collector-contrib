@@ -54,21 +54,10 @@ func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settin
 	var hmacKey []byte
 	var cert *x509.Certificate
 	if cfg.Mode == ModeSync {
-		if cfg.HmacKeyFile != "" || (cfg.K8sSecret != nil && cfg.K8sSecret.HMACKeyEntry != "") {
-			var err error
-			hmacKey, err = loadHMACKey(cfg)
-			if err != nil {
-				return nil, err
-			}
-			logger.Info("Loaded HMAC key for audit log verification")
-		}
-		if cfg.CertFile != "" || (cfg.K8sSecret != nil && cfg.K8sSecret.CertKeyEntry != "") {
-			var err error
-			cert, err = loadCertificate(cfg)
-			if err != nil {
-				return nil, err
-			}
-			logger.Info("Loaded certificate for audit log signature verification")
+		var err error
+		hmacKey, cert, err = loadSyncVerificationKeys(cfg, logger)
+		if err != nil {
+			return nil, err
 		}
 	}
 

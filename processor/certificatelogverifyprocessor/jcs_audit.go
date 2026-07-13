@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,6 +41,21 @@ type jcsAttr struct {
 
 func isIntegrityAttributeKey(key string) bool {
 	return key == auditAttrIntegrityVal || strings.HasPrefix(key, "audit.integrity.")
+}
+
+func isProcessorOutcomeAttribute(key string) bool {
+	switch key {
+	case verifyStatusKey, verifyReasonKey, verifyDetailsKey,
+		verifiedAtKey, verificationProfileKey,
+		tier2StatusKey, exportStatusKey, lastStateChangeAtKey:
+		return true
+	default:
+		return false
+	}
+}
+
+func isExcludedFromJCS(key string) bool {
+	return isIntegrityAttributeKey(key) || isProcessorOutcomeAttribute(key)
 }
 
 func jcsCanonicalAuditRecord(lr plog.LogRecord) ([]byte, error) {
@@ -112,13 +128,30 @@ func integrityHashHex(lr plog.LogRecord) (string, error) {
 func collectNonIntegrityAttributes(lr plog.LogRecord) []jcsAttr {
 	attrs := make([]jcsAttr, 0)
 	lr.Attributes().Range(func(k string, v pcommon.Value) bool {
-		if isIntegrityAttributeKey(k) {
+		if isExcludedFromJCS(k) {
 			return true
 		}
-		attrs = append(attrs, jcsAttr{Key: k, Value: v.AsString()})
+		attrs = append(attrs, jcsAttr{Key: k, Value: canonicalAttrString(v)})
 		return true
 	})
 	return attrs
+}
+
+func canonicalAttrString(v pcommon.Value) string {
+	switch v.Type() {
+	case pcommon.ValueTypeEmpty:
+		return ""
+	case pcommon.ValueTypeStr:
+		return v.Str()
+	case pcommon.ValueTypeInt:
+		return strconv.FormatInt(v.Int(), 10)
+	case pcommon.ValueTypeBool:
+		return strconv.FormatBool(v.Bool())
+	case pcommon.ValueTypeDouble:
+		return strconv.FormatFloat(v.Double(), 'g', -1, 64)
+	default:
+		return v.AsString()
+	}
 }
 
 func attrString(lr plog.LogRecord, key string) string {
@@ -126,7 +159,7 @@ func attrString(lr plog.LogRecord, key string) string {
 	if !ok {
 		return ""
 	}
-	return v.Str()
+	return canonicalAttrString(v)
 }
 
 func attrInt(lr plog.LogRecord, key string) (int64, bool) {
@@ -142,7 +175,7 @@ func resourceAttrString(resource pcommon.Resource, key string) string {
 	if !ok {
 		return ""
 	}
-	return v.Str()
+	return canonicalAttrString(v)
 }
 
 func formatAuditTimestamp(t time.Time) string {

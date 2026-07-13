@@ -9,12 +9,14 @@ import (
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config/confighttp"
+	"go.opentelemetry.io/collector/config/confignet"
 )
 
 func configWithEndpoint(endpoint string) *Config {
-	sc := confighttp.NewDefaultServerConfig()
-	sc.Endpoint = endpoint
-	return &Config{ServerConfig: sc}
+	netAddr := confignet.NewDefaultAddrConfig()
+	netAddr.Transport = confignet.TransportTypeTCP
+	netAddr.Endpoint = endpoint
+	return &Config{ServerConfig: confighttp.ServerConfig{NetAddr: netAddr}}
 }
 
 func TestConfigValidateRequiresEndpoint(t *testing.T) {
@@ -81,5 +83,20 @@ func TestCircuitBreakerCanBeDisabled(t *testing.T) {
 	}
 	if cfg.CircuitBreaker.IsEnabled() {
 		t.Fatal("circuit breaker should be disabled")
+	}
+}
+
+func TestCircuitBreakerOpenBehaviorValidation(t *testing.T) {
+	t.Parallel()
+	cfg := configWithEndpoint("localhost:4310")
+	cfg.StorageID = component.NewIDWithName(component.MustNewType("file_storage"), "")
+	cfg.ResponseMode = ResponseModeSync
+	cfg.CircuitBreaker.OpenBehavior = "queue"
+	if err := cfg.Validate(); !errors.Is(err, errInvalidCircuitOpenBehavior) {
+		t.Fatalf("expected invalid open_behavior error, got %v", err)
+	}
+	cfg.CircuitBreaker.OpenBehavior = CircuitOpenAccept
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("accept should validate, got %v", err)
 	}
 }

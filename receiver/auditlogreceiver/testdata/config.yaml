@@ -17,6 +17,6 @@ exporters:
 service:
   extensions: [file_storage]
   pipelines:
-    logs:
+    logs/audit:
       receivers: [auditlogreceiver]
       exporters: [debug]

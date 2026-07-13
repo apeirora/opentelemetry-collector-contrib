@@ -2,6 +2,43 @@
 
 The Audit Log Receiver is an OpenTelemetry Collector receiver that accepts audit log data via HTTP and processes it asynchronously using storage for persistence.
 
+## Sync delivery guarantees
+
+For the recommended Tier-2 audit pipeline (`response_mode: sync`, SDK `WaitOnExport: true`, `certificatelogverify` only in the `logs` pipeline):
+
+- **Storage is required** — The receiver fails startup without a configured storage extension. Each sync request is written to a WAL before pipeline delivery and deleted after successful export.
+- **At-least-once delivery** — Records may be delivered more than once after crashes, offline recovery, transient 503s, or rare WAL delete failures after a successful pipeline run.
+- **Sink idempotency (required)** — Downstream sinks **must deduplicate on `audit.record.id`**. Treat it as an idempotency key: upsert, reject duplicates, or accept silently without a second durable write.
+- **No exporter `sending_queue`** — Audit log exporters must set `sending_queue.enabled: false` so durability is not split across SDK store, receiver WAL, and exporter queue.
+- **Verify keys at startup only** — `certificatelogverify` loads HMAC key and certificate once at processor startup; rotation requires a collector rolling restart (see `processor/certificatelogverifyprocessor/README.md`).
+
+See `example-config.yaml` and `AUDITLOG_PIPELINE_PITFALLS.md` for full operator guidance.
+
+### Monitoring WAL health
+
+Watch collector logs (and alert on storage errors / growth of WAL `pending/` keys):
+
+| Log message | Level | Meaning |
+|-------------|-------|---------|
+| `Stored sync WAL entry` | Info | Request persisted before delivery (`pending_key`, `log_records`) |
+| `Cleared sync WAL entry after successful delivery` | Info | WAL deleted after pipeline success |
+| `Sync delivery failed, WAL entry retained for recovery` | Warn | Transient pipeline failure; entry kept for retry/recovery |
+| `Delivered but failed to delete pending entry; downstream sinks must dedupe on audit.record.id` | Error | Orphan risk — export succeeded but WAL delete failed |
+| `Recovering pending sync audit logs` | Info | Startup recovery batch (`count`) |
+| `Recovered and cleared sync WAL entry` | Info | Recovery replay succeeded and WAL cleared |
+| `Recovery delivery failed, WAL entry retained` | Warn | Recovery replay failed transiently; entry kept |
+| `Recovered but failed to delete pending entry; downstream sinks must dedupe on audit.record.id` | Error | Recovery delivered but WAL delete failed |
+| `Corrupt WAL entry moved to dead letter` | Error | Unparseable WAL JSON — raw bytes in `dead_letter/corrupt_*` |
+| `Failed to move corrupt WAL entry to dead letter` | Error | Corrupt entry retained in `pending/` for retry |
+| `Circuit open; stored WAL entry and deferred delivery` | Info | `open_behavior: accept` — 202 returned, delivery deferred |
+
+### Circuit breaker during backend outages
+
+In sync mode, when the circuit breaker is open, `circuit_breaker.open_behavior` chooses:
+
+- **`reject`** (default) — HTTP **503**, no WAL write. Use with SDK `WaitOnExport` so the app retries when the backend recovers.
+- **`accept`** — Persist to WAL, HTTP **202**, deliver when the circuit closes (recovery). Use when apps cannot tolerate 503 on valid records during outages; sinks still **must dedupe on `audit.record.id`**.
+
 ## Quick Start with Docker
 
 ### Using Published Docker Image (Recommended)
