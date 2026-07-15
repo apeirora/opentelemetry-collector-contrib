@@ -2,13 +2,17 @@
 
 FROM golang:1.25-bookworm AS builder
 
+ARG TARGETOS=linux
+ARG TARGETARCH
+
 WORKDIR /src
 COPY . .
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
+    GOBIN=/go/bin go install -modfile=internal/tools/go.mod go.opentelemetry.io/collector/cmd/builder && \
     ./internal/buildscripts/ocb-add-replaces.sh otelauditcol && \
-    CGO_ENABLED=0 GOOS=linux go run go.opentelemetry.io/collector/cmd/builder \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} /go/bin/builder \
       --config cmd/otelauditcol/builder-config-replaced.yaml
 
 FROM alpine:3.21@sha256:5b10f432ef3da1b8d4c7eb6c487f2f5a8f096bc91145e68878dd4a5019afde11 AS certs
