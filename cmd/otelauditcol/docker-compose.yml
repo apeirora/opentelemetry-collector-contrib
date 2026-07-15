@@ -1,0 +1,23 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  otelauditcol:
+    image: ghcr.io/apeirora/opentelemetry-collector-contrib/otelauditcol:latest
+    build:
+      context: ../..
+      dockerfile: cmd/otelauditcol/Dockerfile
+    depends_on:
+      - redis
+    ports:
+      - "4310:4310"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./demo-config.yaml:/etc/otel/config.yaml:ro
+      - ../../receiver/auditlogreceiver/testdata/tls:/etc/otel/tls:ro
+      - ../../processor/certificatelogverifyprocessor/testdata/dev_hmac_key.txt:/etc/otel/secrets/dev_hmac_key.txt:ro
+      - ../../processor/certificatelogverifyprocessor/k8s/certificates/cert.pem:/etc/otel/secrets/verify.crt:ro
+    command: ["--config", "/etc/otel/config.yaml"]

@@ -375,6 +375,18 @@ endif
 docker-otelcontribcol:
 	COMPONENT=otelcontribcol $(MAKE) docker-component
 
+.PHONY: docker-otelauditcol
+docker-otelauditcol:
+	GOOS=linux GOARCH=$(GOARCH) $(MAKE) otelauditcol
+	cp ./bin/otelauditcol_linux_$(GOARCH) ./cmd/otelauditcol/otelauditcol
+	docker build --platform linux/$(GOARCH) -f cmd/otelauditcol/Dockerfile.runtime -t otelauditcol ./cmd/otelauditcol/
+	rm ./cmd/otelauditcol/otelauditcol
+
+.PHONY: docker-otelauditcol-standalone
+docker-otelauditcol-standalone:
+	docker build --platform linux/$(GOARCH) -f cmd/otelauditcol/Dockerfile -t otelauditcol .
+
+
 .PHONY: docker-supervisor-otelcontribcol
 docker-supervisor-otelcontribcol: docker-otelcontribcol
 	COMPONENT=opampsupervisor $(MAKE) docker-component

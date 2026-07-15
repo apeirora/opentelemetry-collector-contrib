@@ -1,0 +1,68 @@
+extensions:
+  redis_storage/wal:
+    endpoint: redis:6379
+    db: 0
+    tls:
+      insecure: true
+  redis_storage/audit_meta:
+    endpoint: redis:6379
+    db: 1
+    tls:
+      insecure: true
+
+receivers:
+  auditlogreceiver:
+    endpoint: 0.0.0.0:4310
+    path: /v1/audit
+    response_mode: sync
+    storage: redis_storage/wal
+    tls:
+      cert_file: /etc/otel/tls/server.crt
+      key_file: /etc/otel/tls/server.key
+      client_ca_file: /etc/otel/tls/ca.crt
+      min_version: "1.2"
+    circuit_breaker:
+      enabled: true
+      open_behavior: reject
+
+processors:
+  certificatelogverify:
+    mode: sync
+    failure_mode: strict
+    hmac_key_file: /etc/otel/secrets/hmac.key
+    cert_file: /etc/otel/secrets/verify.crt
+    hash_chain:
+      enabled: false
+      storage: redis_storage/audit_meta
+    dead_letter:
+      enabled: true
+      storage: redis_storage/audit_meta
+      key_prefix: audit_verify_dlq/
+      fail_on_storage_error: true
+
+exporters:
+  otlp_http:
+    endpoint: http://backend:4318
+    timeout: 8s
+    sending_queue:
+      enabled: false
+    retry_on_failure:
+      enabled: true
+      initial_interval: 500ms
+      max_interval: 2s
+      max_elapsed_time: 8s
+    tls:
+      insecure: true
+
+service:
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      level: none
+  extensions: [redis_storage/wal, redis_storage/audit_meta]
+  pipelines:
+    logs/audit:
+      receivers: [auditlogreceiver]
+      processors: [certificatelogverify]
+      exporters: [otlp_http]

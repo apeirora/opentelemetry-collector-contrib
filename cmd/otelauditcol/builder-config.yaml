@@ -1,11 +1,17 @@
-# Minimal collector for local audit-log development.
+# Minimal, security-focused collector for audit-log ingestion and verification.
 # Build: make otelauditcol
-# Run:   ./bin/otelauditcol_windows_amd64.exe --config ./receiver/auditlogreceiver/example-config.yaml
+# Image: make docker-otelauditcol
+# Publish: .github/workflows/otelauditcol.yml → ghcr.io/apeirora/opentelemetry-collector-contrib/otelauditcol
+# Demo: cd cmd/otelauditcol && docker compose up --build
+#
+# Components are intentionally limited to the sync audit pipeline:
+#   auditlogreceiver -> certificatelogverify -> otlphttpexporter
+# No batch/memorylimiter/debug exporters — they widen attack surface and break sync semantics.
 
 dist:
   module: github.com/open-telemetry/opentelemetry-collector-contrib/cmd/otelauditcol
   name: otelauditcol
-  description: Minimal OpenTelemetry Collector for audit log receiver development.
+  description: Minimal OpenTelemetry Collector for secure audit-log ingestion.
   version: 0.151.0-dev
   output_path: ./cmd/otelauditcol
 
@@ -13,12 +19,9 @@ extensions:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/extension/storage/redisstorageextension v0.151.0
 
 exporters:
-  - gomod: go.opentelemetry.io/collector/exporter/debugexporter v0.151.1-0.20260501001745-24aecacf1c04
   - gomod: go.opentelemetry.io/collector/exporter/otlphttpexporter v0.151.1-0.20260501001745-24aecacf1c04
 
 processors:
-  - gomod: go.opentelemetry.io/collector/processor/batchprocessor v0.151.1-0.20260501001745-24aecacf1c04
-  - gomod: go.opentelemetry.io/collector/processor/memorylimiterprocessor v0.151.1-0.20260501001745-24aecacf1c04
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/certificatelogverifyprocessor v0.151.0
 
 receivers:

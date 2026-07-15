@@ -1,0 +1,13 @@
+*
+!builder-config.yaml
+!metadata.yaml
+!Dockerfile
+!Dockerfile.runtime
+!README.md
+!demo-config.yaml
+!docker-compose.yml
+!config.yaml
+!test-local-config.yaml
+!k8s/
+!k8s/**
+!.gitignore

@@ -39,7 +39,7 @@ f. **[RESOLVED] OTLP partial success / per-record batch failures** — Concern t
 → **Resolution:** Collector sync mode **notifies per-record outcomes**: mixed verify results → **HTTP 200** + OTLP `partialSuccess` (`rejected_log_records`, `error_message` with `rejected_record_ids` JSON); all records fail → **HTTP 400**. `testapp` emits one record per `Export()` so each emit gets `200 delivered` or `400 rejected` (scenarios 02, 07). SDK OTLP exporter rejects `partial_success` only if a multi-record `Export()` receives it — not the default one-record path. See §1.3, §2.6, `partial_batch_test.go`.
 
 g. **[RESOLVED] Processor order / mutating processors** — Mutating processors before verify cause `integrity_mismatch` or silent tampering.  
-→ **Resolution:** Audit `logs` pipeline allows **`certificatelogverify` only** — **no other processors** (no `batch`, `attributes`, `transform`, `filter`, or any mutating processor). See `example-config.yaml`, `testlogs/README.md` rule 2, §1.4.
+→ **Resolution:** Audit `logs` pipeline allows **`certificatelogverify` only** — **no other processors** (no `batch`, `queuebatch`, `attributes`, `transform`, `filter`, or any mutating processor). See `example-config.yaml`, `testlogs/README.md` rule 2, §1.4.
 
 h. **[RESOLVED] Shared storage keys** — WAL (`pending/`), hash chain (`hash_chain/`), DLQ (`dead_letter/`) may share one backend; collisions and ops confusion if namespaces are not explicit.  
 → **Resolution:** `example-config.yaml` splits `redis_storage/wal` (db 0, receiver only) and `redis_storage/audit_meta` (db 1, processor DLQ/hash chain) with `dead_letter.key_prefix: audit_verify_dlq/`. Exporters `sending_queue: false`. SDK store remains app-side. See §1.5.
@@ -306,7 +306,7 @@ Collector implementation: `splitLogsByRecord`, `writeOTLPPartialSuccessResponse`
 
 **Status: [RESOLVED]** — see summary item **g**.
 
-**Policy:** The audit `logs` pipeline must contain **`certificatelogverify` only**. Do **not** add any other processors — especially mutating ones (`batch`, `attributes`, `transform`, `filter`, `resource`, custom mutators). Any mutation before or after verify breaks the signed JCS payload or allows tampering after verification.
+**Policy:** The audit `logs` pipeline must contain **`certificatelogverify` only**. Do **not** add any other processors — especially mutating ones (`batch`, `queuebatch`, `attributes`, `transform`, `filter`, `resource`, custom mutators). Any mutation before or after verify breaks the signed JCS payload or allows tampering after verification.
 
 **Required pipeline:**
 
@@ -317,6 +317,21 @@ pipelines:
     processors: [certificatelogverify]
     exporters: [...]
 ```
+
+#### Do not use `queuebatchprocessor` (core collector PR [#15500](https://github.com/open-telemetry/opentelemetry-collector/pull/15500))
+
+`queuebatchprocessor` is the planned replacement for `batchprocessor`. It is **not** suitable for the sync audit pipeline even if configured with `wait_for_result: true`.
+
+| Concern | `queuebatchprocessor` behavior | Audit pipeline requirement |
+| ------- | ------------------------------ | -------------------------- |
+| Async handoff | Default `wait_for_result: false` — returns before export completes | Sync end-to-end; HTTP 200/400/503 only after full delivery |
+| Batching | Merges records (`min_size: 8192`, `flush_timeout: 200ms`) | One record per request; per-record verify and export outcomes |
+| Extra queue | In-memory queue between verify and export | Single durability path: receiver WAL + SDK store only |
+| Processor policy | Adds a second processor | `certificatelogverify` only |
+| Integrity | Changes batch boundaries and timing after verify | JCS-signed payload must not be re-batched or delayed opaquely |
+| HTTP semantics | Caller may succeed while export is still pending | 200 = verified **and** exported; 503 = real failure |
+| Competing retry | Queue retries overlap WAL and inline exporter retry | `sending_queue.enabled: false`; bounded inline retry only |
+| `MutatesData` | With `batch.enabled: false`, may pass read-only pdata to a mutating downstream processor | Direct sync chain into `certificatelogverify` |
 
 Reference: `receiver/auditlogreceiver/example-config.yaml`, `opentelemetry-go/testlogs/README.md` rule 2.
 
