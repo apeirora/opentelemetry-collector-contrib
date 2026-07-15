@@ -2,7 +2,7 @@ name: otelauditcol
 
 on:
   push:
-    branches: [main]
+    branches: [main, auditLogCollector]
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+*"
     paths:
@@ -75,7 +75,8 @@ jobs:
             TAGS="${TAGS},${{ env.IMAGE }}:main"
             TAGS="${TAGS},${{ env.IMAGE }}:sha-${SHORT_SHA}"
           else
-            TAGS="${{ env.IMAGE }}:sha-${SHORT_SHA}"
+            TAGS="${{ env.IMAGE }}:test-${BRANCH_TAG}"
+            TAGS="${TAGS},${{ env.IMAGE }}:sha-${SHORT_SHA}"
           fi
 
           if [ -n "${{ steps.release_tag.outputs.tag }}" ]; then
