@@ -11,15 +11,3 @@ status:
 
 tests:
   config:
-
-
-telemetry:
-  metrics:
-    signing_processor_processed_logs:
-      description: Number of signed log records.
-      stability:
-        level: development
-      unit: "{records}"
-      enabled: true
-      histogram:
-        value_type: int
