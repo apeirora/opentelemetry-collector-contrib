@@ -24,6 +24,7 @@ import (
 // LogRecord mirrors the JSON shape produced by the collector's debug exporter
 // and the single-record format accepted by verify-signed-log.sh.
 type LogRecord struct {
+	EventName           *string                `json:"event_name,omitempty"`
 	Body                interface{}            `json:"body,omitempty"`
 	Attributes          map[string]interface{} `json:"attributes,omitempty"`
 	Timestamp           *int64                 `json:"timestamp,omitempty"`
@@ -187,6 +188,10 @@ func main() {
 // NOT start with "audit.integrity.".
 func serializeLogRecord(record LogRecord) ([]byte, error) {
 	data := make(map[string]interface{})
+
+	if record.EventName != nil && *record.EventName != "" {
+		data["event_name"] = *record.EventName
+	}
 
 	if record.Body != nil {
 		if bodyStr, ok := record.Body.(string); ok {

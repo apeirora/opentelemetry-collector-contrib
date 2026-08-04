@@ -133,6 +133,10 @@ func (p *signingProcessor) processLogRecord(lr plog.LogRecord) error {
 func (p *signingProcessor) serializeLogRecord(lr plog.LogRecord) ([]byte, error) {
 	data := make(map[string]interface{})
 
+	if lr.EventName() != "" {
+		data["event_name"] = lr.EventName()
+	}
+
 	if lr.Body().Type() == pcommon.ValueTypeStr {
 		data["body"] = lr.Body().Str()
 	}

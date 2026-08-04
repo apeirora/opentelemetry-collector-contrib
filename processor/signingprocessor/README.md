@@ -5,11 +5,11 @@
 
 The signing processor adds cryptographic integrity attributes to log records.
 For each log record it computes a canonical JSON hash (RFC 8785 / JCS) over
-the full record and signs it with an RSA private key.  The resulting hash and
-signature is stored as `audit.integrity.value`
-attributes on the record, and the JWA algorithm identifier plus a certificate
-reference are stored as `audit.integrity.algorithm` and
-`audit.integrity.certificate` on the enclosing Resource.
+the full record and signs it with an RSA private key.  The resulting signature
+is stored as `audit.integrity.value` attribute on the record, and the JWA
+algorithm identifier plus a certificate reference are stored as
+`audit.integrity.algorithm` and `audit.integrity.certificate` on the enclosing
+Resource.
 
 The processor is designed for use with the [OpenTelemetry Audit Logging
 signal](https://github.com/apeirora/opentelemetry-specification/tree/auditing/specification/audit)
@@ -71,7 +71,7 @@ processors:
 ## Key source providers
 
 | Provider | Description |
-|---|---|
+| --- | --- |
 | `file` | Reads PEM-encoded certificate and RSA private key from local files. Supports plain PEM and base64-encoded PEM. |
 | `env` | Reads PEM (or base64 PEM) from environment variables. Useful for container deployments where secrets are injected via env. |
 | `k8s_secret` | Reads a Kubernetes Secret by name/namespace via the in-cluster or kubeconfig client. |
@@ -88,7 +88,7 @@ processors:
 ### Per Resource (set once per ResourceLogs block)
 
 | Attribute | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `audit.integrity.algorithm` | string | JWA algorithm identifier: `RS256` (SHA-256) or `RS512` (SHA-512). |
 | `audit.integrity.certificate` | string | Certificate reference: `sha256:<hex>` fingerprint or full base64 DER, depending on `certificate_ref`. |
 
@@ -100,7 +100,7 @@ canonicalises it with RFC 8785 (JCS), and hashes the result.  All
 those attributes are removed.
 
 ```
-body, timestamp, observed_timestamp, severity_number, severity_text,
+event_name, body, timestamp, observed_timestamp, severity_number, severity_text,
 trace_id, span_id, attributes (all except audit.integrity.*)
 ```
 

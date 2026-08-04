@@ -78,6 +78,9 @@ func verifyRecord(t *testing.T, lr plog.LogRecord, pubKey *rsa.PublicKey) {
 
 	// Reconstruct the payload the processor signed
 	data := make(map[string]interface{})
+	if lr.EventName() != "" {
+		data["event_name"] = lr.EventName()
+	}
 	if lr.Body().Type() == pcommon.ValueTypeStr {
 		data["body"] = lr.Body().Str()
 	}
@@ -248,5 +251,48 @@ func TestIntegrityAttrsExcludedFromPayload(t *testing.T) {
 	}
 	if strings.Contains(string(b), "audit.integrity") {
 		t.Errorf("serialized payload contains audit.integrity.* attr: %s", string(b))
+	}
+}
+
+// TestSignVerifyEventName confirms that EventName is part of the signed payload:
+// changing it after signing must cause signature verification to fail.
+func TestSignVerifyEventName(t *testing.T) {
+	prov := newTestProvider(t)
+	p := &signingProcessor{
+		config:       &Config{HashAlgorithm: "SHA256", CertificateRef: CertificateRefFingerprint},
+		provider:     prov,
+		hashFunc:     func() hash.Hash { return crypto.SHA256.New() },
+		jwaAlgorithm: "RS256",
+		certRef:      "sha256:test",
+	}
+
+	lr := plog.NewLogRecord()
+	lr.SetEventName("user.login.success")
+	lr.SetTimestamp(pcommon.Timestamp(1714041600000000000))
+	lr.Attributes().PutStr("audit.actor.id", "u1")
+
+	if err := p.processLogRecord(lr); err != nil {
+		t.Fatalf("processLogRecord: %v", err)
+	}
+
+	// Happy path: EventName in payload → signature valid
+	verifyRecord(t, lr, &prov.key.PublicKey)
+
+	// Tamper: change EventName → signature must no longer verify
+	sigVal, _ := lr.Attributes().Get("audit.integrity.value")
+	sigBytes, _ := base64.StdEncoding.DecodeString(sigVal.Str())
+
+	// Re-serialize with tampered EventName
+	lr.SetEventName("admin.delete.all")
+	tamperedPayload, err := p.serializeLogRecord(lr)
+	if err != nil {
+		t.Fatalf("serialize tampered: %v", err)
+	}
+	h := sha256.Sum256(tamperedPayload)
+	err = rsa.VerifyPKCS1v15(&prov.key.PublicKey, crypto.SHA256, h[:], sigBytes)
+	if err == nil {
+		t.Error("❌ tampered EventName did not invalidate the signature")
+	} else {
+		t.Logf("🔍 tampered EventName correctly invalidates signature: %v", err)
 	}
 }
