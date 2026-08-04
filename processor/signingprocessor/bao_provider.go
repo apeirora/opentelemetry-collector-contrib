@@ -25,8 +25,20 @@ type baoKeyMaterialProvider struct {
 // environment variables (BAO_ADDR, BAO_TOKEN, BAO_ROLE_ID, …) or the explicit
 // Token field in BaoKeyConfig.
 func newBaoKeyMaterialProvider(ctx context.Context, cfg *BaoKeyConfig) (KeyMaterialProvider, error) {
+	return newBaoKeyMaterialProviderWithAddress(ctx, cfg, "")
+}
+
+// newBaoKeyMaterialProviderWithAddress is like newBaoKeyMaterialProvider but
+// accepts an explicit server address, which overrides both cfg.Address and the
+// BAO_ADDR environment variable. Passing an empty string falls back to the
+// normal resolution order.
+func newBaoKeyMaterialProviderWithAddress(ctx context.Context, cfg *BaoKeyConfig, addressOverride string) (KeyMaterialProvider, error) {
 	clientCfg := openbao.DefaultConfig()
-	if cfg.Address != "" {
+
+	switch {
+	case addressOverride != "":
+		clientCfg.Address = addressOverride
+	case cfg.Address != "":
 		clientCfg.Address = cfg.Address
 	}
 
