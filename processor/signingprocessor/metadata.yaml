@@ -3,8 +3,8 @@ type: signing
 status:
   class: processor
   stability:
-    alpha: [ logs ]
-  distributions: [ contrib ]
+    development: [ logs ]
+  distributions: []
   warnings: []
   codeowners:
     active: [hilmarf, MJarmo]
