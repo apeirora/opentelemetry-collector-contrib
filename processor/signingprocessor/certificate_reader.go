@@ -12,25 +12,25 @@ import (
 	"strings"
 )
 
-// CertificateReader holds a parsed RSA private key and X.509 certificate.
+// certificateReader holds a parsed RSA private key and X.509 certificate.
 // It is used by KeyMaterialProvider implementations after they have fetched
 // the raw PEM data from their respective source.
-type CertificateReader struct {
+type certificateReader struct {
 	cert *x509.Certificate
 	key  *rsa.PrivateKey
 }
 
-func (cr *CertificateReader) GetPrivateKey() *rsa.PrivateKey {
+func (cr *certificateReader) GetPrivateKey() *rsa.PrivateKey {
 	return cr.key
 }
 
-func (cr *CertificateReader) GetCertificate() *x509.Certificate {
+func (cr *certificateReader) GetCertificate() *x509.Certificate {
 	return cr.cert
 }
 
 // parseCertificateData parses PEM-encoded certificate and private key bytes
-// into a CertificateReader. Only RSA keys (PKCS1 and PKCS8) are supported.
-func parseCertificateData(certPEM, keyPEM []byte) (*CertificateReader, error) {
+// into a certificateReader. Only RSA keys (PKCS1 and PKCS8) are supported.
+func parseCertificateData(certPEM, keyPEM []byte) (*certificateReader, error) {
 	if len(certPEM) == 0 {
 		return nil, fmt.Errorf("certificate data is empty")
 	}
@@ -83,7 +83,7 @@ func parseCertificateData(certPEM, keyPEM []byte) (*CertificateReader, error) {
 		return nil, fmt.Errorf("unsupported private key type: %s", keyBlock.Type)
 	}
 
-	return &CertificateReader{
+	return &certificateReader{
 		cert: cert,
 		key:  key,
 	}, nil

@@ -11,7 +11,7 @@ import (
 )
 
 type fileKeyMaterialProvider struct {
-	reader *CertificateReader
+	reader *certificateReader
 }
 
 func newFileKeyMaterialProvider(cfg *FileKeyConfig) (KeyMaterialProvider, error) {

@@ -13,7 +13,7 @@ import (
 )
 
 type baoKeyMaterialProvider struct {
-	reader *CertificateReader
+	reader *certificateReader
 }
 
 // newBaoKeyMaterialProvider reads a PEM certificate and private key from an

@@ -14,7 +14,7 @@ import (
 )
 
 type k8sKeyMaterialProvider struct {
-	reader *CertificateReader
+	reader *certificateReader
 }
 
 func newK8sKeyMaterialProvider(ctx context.Context, cfg *K8sSecretConfig, logger *zap.Logger) (KeyMaterialProvider, error) {

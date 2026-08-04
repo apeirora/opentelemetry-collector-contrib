@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package metadata contains the component.Type and stability metadata for the signing processor.
-package metadata
+package metadata // import "github.com/open-telemetry/opentelemetry-collector-contrib/processor/signingprocessor/internal/metadata"
 
 import (
 	"go.opentelemetry.io/collector/component"

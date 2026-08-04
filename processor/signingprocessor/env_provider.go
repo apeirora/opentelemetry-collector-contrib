@@ -11,7 +11,7 @@ import (
 )
 
 type envKeyMaterialProvider struct {
-	reader *CertificateReader
+	reader *certificateReader
 }
 
 func newEnvKeyMaterialProvider(cfg *EnvKeyConfig) (KeyMaterialProvider, error) {

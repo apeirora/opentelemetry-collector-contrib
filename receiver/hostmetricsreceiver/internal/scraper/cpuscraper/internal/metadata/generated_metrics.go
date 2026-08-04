@@ -3,14 +3,13 @@
 package metadata
 
 import (
-	"slices"
-	"time"
-
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/scraper"
 	conventions "go.opentelemetry.io/otel/semconv/v1.9.0"
+	"slices"
+	"time"
 )
 
 const (
