@@ -5,12 +5,16 @@ go 1.25.0
 require (
 	github.com/gowebpki/jcs v1.0.1
 	github.com/openbao/openbao/api/v2 v2.5.1
+	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/collector/component v1.63.0
 	go.opentelemetry.io/collector/component/componenttest v0.157.1-0.20260803152855-18ed8fe814ea
+	go.opentelemetry.io/collector/confmap v1.63.0
 	go.opentelemetry.io/collector/consumer v1.63.0
+	go.opentelemetry.io/collector/consumer/consumertest v0.157.0
 	go.opentelemetry.io/collector/pdata v1.63.0
 	go.opentelemetry.io/collector/processor v1.63.0
 	go.opentelemetry.io/collector/processor/processortest v0.157.1-0.20260803152855-18ed8fe814ea
+	go.uber.org/goleak v1.3.0
 	go.uber.org/zap v1.28.0
 	k8s.io/api v0.34.3
 	k8s.io/apimachinery v0.34.3
@@ -59,12 +63,9 @@ require (
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/spf13/pflag v1.0.6 // indirect
-	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/collector/component/componentstatus v0.157.0 // indirect
-	go.opentelemetry.io/collector/confmap v1.63.0 // indirect
-	go.opentelemetry.io/collector/consumer/consumertest v0.157.0 // indirect
 	go.opentelemetry.io/collector/consumer/xconsumer v0.157.0 // indirect
 	go.opentelemetry.io/collector/featuregate v1.63.0 // indirect
 	go.opentelemetry.io/collector/internal/componentalias v0.157.0 // indirect
