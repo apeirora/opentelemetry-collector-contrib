@@ -71,10 +71,6 @@ func newTestProcessor(t *testing.T, provider KeyMaterialProvider) *signingProces
 func verifyRecord(t *testing.T, lr plog.LogRecord, pubKey *rsa.PublicKey) {
 	t.Helper()
 
-	hashVal, ok := lr.Attributes().Get("audit.integrity.hash")
-	if !ok {
-		t.Fatal("audit.integrity.hash missing")
-	}
 	sigVal, ok := lr.Attributes().Get("audit.integrity.value")
 	if !ok {
 		t.Fatal("audit.integrity.value missing")
@@ -124,12 +120,6 @@ func verifyRecord(t *testing.T, lr plog.LogRecord, pubKey *rsa.PublicKey) {
 	}
 
 	computedHash := sha256.Sum256(canonical)
-	computedHashB64 := base64.StdEncoding.EncodeToString(computedHash[:])
-
-	if computedHashB64 != hashVal.Str() {
-		t.Errorf("hash mismatch:\n  computed: %s\n  stored:   %s\n  payload:  %s",
-			computedHashB64, hashVal.Str(), string(canonical))
-	}
 
 	sigBytes, err := base64.StdEncoding.DecodeString(sigVal.Str())
 	if err != nil {

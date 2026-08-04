@@ -125,13 +125,6 @@ func main() {
 			fmt.Printf("\n=== Verifying Log Record %d ===\n", i+1)
 		}
 
-		hashValue, ok := record.Attributes["audit.integrity.hash"].(string)
-		if !ok || hashValue == "" {
-			fmt.Fprintf(os.Stderr, "❌ Log record %d: missing audit.integrity.hash attribute\n", i+1)
-			allValid = false
-			continue
-		}
-
 		signatureValue, ok := record.Attributes["audit.integrity.value"].(string)
 		if !ok || signatureValue == "" {
 			fmt.Fprintf(os.Stderr, "❌ Log record %d: missing audit.integrity.value attribute\n", i+1)
@@ -160,17 +153,8 @@ func main() {
 			computedHash = h[:]
 		}
 
-		computedHashBase64 := base64.StdEncoding.EncodeToString(computedHash)
-
 		if *verbose {
-			fmt.Printf("Computed hash: %s\n", computedHashBase64)
-			fmt.Printf("Provided hash: %s\n", hashValue)
-		}
-
-		if computedHashBase64 != hashValue {
-			fmt.Printf("❌ Log record %d: Hash mismatch!\n", i+1)
-			allValid = false
-			continue
+			fmt.Printf("Computed hash: %s\n", base64.StdEncoding.EncodeToString(computedHash))
 		}
 
 		signatureBytes, err := base64.StdEncoding.DecodeString(signatureValue)

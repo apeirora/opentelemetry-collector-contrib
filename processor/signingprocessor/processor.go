@@ -101,9 +101,8 @@ func (p *signingProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error 
 
 // processLogRecord computes a hash over the full log record (excluding
 // audit.integrity.* attributes) and signs it.
-// It adds two attributes:
-//   - audit.integrity.hash:  base64-encoded hash of the canonical serialization
-//   - audit.integrity.value: base64-encoded RSA PKCS1v15 signature of that hash
+// It adds one attribute:
+//   - audit.integrity.value: base64-encoded RSA PKCS1v15 signature of the canonical hash
 func (p *signingProcessor) processLogRecord(lr plog.LogRecord) error {
 	logData, err := p.serializeLogRecord(lr)
 	if err != nil {
@@ -115,7 +114,6 @@ func (p *signingProcessor) processLogRecord(lr plog.LogRecord) error {
 		return fmt.Errorf("failed to compute hash: %w", err)
 	}
 	hashBytes := h.Sum(nil)
-	hashBase64 := base64.StdEncoding.EncodeToString(hashBytes)
 
 	privateKey := p.provider.GetPrivateKey()
 	signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, p.config.GetHash(), hashBytes)
@@ -124,7 +122,6 @@ func (p *signingProcessor) processLogRecord(lr plog.LogRecord) error {
 	}
 	signatureBase64 := base64.StdEncoding.EncodeToString(signature)
 
-	lr.Attributes().PutStr("audit.integrity.hash", hashBase64)
 	lr.Attributes().PutStr("audit.integrity.value", signatureBase64)
 
 	return nil

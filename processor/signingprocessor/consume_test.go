@@ -61,9 +61,6 @@ func TestConsumeLogsResourceAttrs(t *testing.T) {
 	t.Logf("✅ resource attrs: algorithm=%s certificate=%s", algo.Str(), certRef.Str())
 
 	rec := sink.logs[0].ResourceLogs().At(0).ScopeLogs().At(0).LogRecords().At(0)
-	if _, ok3 := rec.Attributes().Get("audit.integrity.hash"); !ok3 {
-		t.Error("audit.integrity.hash missing from log record")
-	}
 	if _, ok4 := rec.Attributes().Get("audit.integrity.value"); !ok4 {
 		t.Error("audit.integrity.value missing from log record")
 	}
