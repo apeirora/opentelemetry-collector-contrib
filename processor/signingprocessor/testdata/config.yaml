@@ -49,6 +49,6 @@ signing/bao:
 signing/hmac:
   algorithm: HMAC-SHA256
   key_source:
-    type: hmac_key
-    hmac_key:
-      key_env_var: SIGNING_HMAC_KEY
+    type: env
+    env:
+      hmac_key_env_var: SIGNING_HMAC_KEY

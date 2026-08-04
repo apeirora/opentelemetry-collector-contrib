@@ -13,28 +13,22 @@ import (
 )
 
 type baoKeyMaterialProvider struct {
-	reader *certificateReader
+	reader  *certificateReader
+	hmacKey []byte
 }
 
-// newBaoKeyMaterialProvider reads a PEM certificate and private key from an
-// OpenBao (or Vault-compatible) KV secret. The secret at cfg.SecretPath must
-// contain the keys named by cfg.CertField and cfg.KeyField whose values are
-// PEM-encoded strings.
-//
-// Authentication is handled entirely by the OpenBao client via the standard
-// environment variables (BAO_ADDR, BAO_TOKEN, BAO_ROLE_ID, …) or the explicit
-// Token field in BaoKeyConfig.
+// newBaoKeyMaterialProvider reads key material from an OpenBao (or Vault-compatible)
+// KV secret. For asymmetric algorithms the secret must contain the fields named by
+// cfg.CertField and cfg.KeyField (PEM-encoded strings). For HMAC-SHA256 it must
+// contain the field named by cfg.HMACKeyField (raw or base64-encoded bytes).
 func newBaoKeyMaterialProvider(ctx context.Context, cfg *BaoKeyConfig) (KeyMaterialProvider, error) {
 	return newBaoKeyMaterialProviderWithAddress(ctx, cfg, "")
 }
 
-// newBaoKeyMaterialProviderWithAddress is like newBaoKeyMaterialProvider but
-// accepts an explicit server address, which overrides both cfg.Address and the
-// BAO_ADDR environment variable. Passing an empty string falls back to the
-// normal resolution order.
+// newBaoKeyMaterialProviderWithAddress is like newBaoKeyMaterialProvider but accepts
+// an explicit server address override (used in tests).
 func newBaoKeyMaterialProviderWithAddress(ctx context.Context, cfg *BaoKeyConfig, addressOverride string) (KeyMaterialProvider, error) {
 	clientCfg := openbao.DefaultConfig()
-
 	switch {
 	case addressOverride != "":
 		clientCfg.Address = addressOverride
@@ -46,7 +40,6 @@ func newBaoKeyMaterialProviderWithAddress(ctx context.Context, cfg *BaoKeyConfig
 	if err != nil {
 		return nil, fmt.Errorf("failed to create openbao client: %w", err)
 	}
-
 	if cfg.Token != "" {
 		client.SetToken(cfg.Token)
 	}
@@ -59,36 +52,54 @@ func newBaoKeyMaterialProviderWithAddress(ctx context.Context, cfg *BaoKeyConfig
 		return nil, fmt.Errorf("secret at %q is empty or does not exist", cfg.SecretPath)
 	}
 
+	// HMAC mode: load only the symmetric key field
+	if cfg.HMACKeyField != "" {
+		raw, err := secretField(secret.Data, cfg.HMACKeyField)
+		if err != nil {
+			return nil, fmt.Errorf("HMAC key field %q in secret %q: %w", cfg.HMACKeyField, cfg.SecretPath, err)
+		}
+		key := decodeIfBase64(normalizeLineEndings([]byte(raw)))
+		if len(key) == 0 {
+			return nil, fmt.Errorf("HMAC key field %q in secret %q is empty after decoding", cfg.HMACKeyField, cfg.SecretPath)
+		}
+		return &baoKeyMaterialProvider{hmacKey: key}, nil
+	}
+
+	// Asymmetric mode: load cert + private key fields
 	certPEM, err := secretField(secret.Data, cfg.CertField)
 	if err != nil {
 		return nil, fmt.Errorf("certificate field %q in secret %q: %w", cfg.CertField, cfg.SecretPath, err)
 	}
-
 	keyPEM, err := secretField(secret.Data, cfg.KeyField)
 	if err != nil {
 		return nil, fmt.Errorf("key field %q in secret %q: %w", cfg.KeyField, cfg.SecretPath, err)
 	}
 
-	certBytes := decodeIfBase64([]byte(certPEM))
-	keyBytes := decodeIfBase64([]byte(keyPEM))
-	certBytes = normalizeLineEndings(certBytes)
-	keyBytes = normalizeLineEndings(keyBytes)
+	certBytes := decodeIfBase64(normalizeLineEndings([]byte(certPEM)))
+	keyBytes := decodeIfBase64(normalizeLineEndings([]byte(keyPEM)))
 
 	reader, err := parseCertificateData(certBytes, keyBytes)
 	if err != nil {
 		return nil, err
 	}
-
 	return &baoKeyMaterialProvider{reader: reader}, nil
 }
 
 func (p *baoKeyMaterialProvider) GetPrivateKey() crypto.Signer {
+	if p.reader == nil {
+		return nil
+	}
 	return p.reader.GetPrivateKey()
 }
 
 func (p *baoKeyMaterialProvider) GetCertificate() *x509.Certificate {
+	if p.reader == nil {
+		return nil
+	}
 	return p.reader.GetCertificate()
 }
+
+func (p *baoKeyMaterialProvider) GetHMACKey() []byte { return p.hmacKey }
 
 func secretField(data map[string]interface{}, field string) (string, error) {
 	raw, ok := data[field]
@@ -104,5 +115,3 @@ func secretField(data map[string]interface{}, field string) (string, error) {
 	}
 	return s, nil
 }
-
-func (p *baoKeyMaterialProvider) GetHMACKey() []byte { return nil }

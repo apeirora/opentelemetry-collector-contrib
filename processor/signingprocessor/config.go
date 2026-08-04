@@ -15,17 +15,16 @@ const (
 	defaultCertificateRef = "fingerprint"
 
 	// Algorithm constants — JWA identifiers (RFC 7518 / RFC 8037 / IANA).
-	AlgorithmRS256     = "RS256"
-	AlgorithmRS512     = "RS512"
-	AlgorithmES256     = "ES256"
-	AlgorithmEdDSA     = "EdDSA"
+	AlgorithmRS256      = "RS256"
+	AlgorithmRS512      = "RS512"
+	AlgorithmES256      = "ES256"
+	AlgorithmEdDSA      = "EdDSA"
 	AlgorithmHMACSHA256 = "HMAC-SHA256"
 
 	KeySourceK8sSecret = "k8s_secret"
 	KeySourceEnv       = "env"
 	KeySourceFile      = "file"
 	KeySourceBao       = "bao"
-	KeySourceHMACKey   = "hmac_key"
 
 	CertificateRefFingerprint = "fingerprint"
 	CertificateRefFull        = "full"
@@ -33,7 +32,7 @@ const (
 
 var (
 	errInvalidAlgorithm       = errors.New("algorithm must be RS256, RS512, ES256, EdDSA, or HMAC-SHA256")
-	errInvalidKeySourceType   = errors.New("key_source.type must be k8s_secret, env, file, bao, or hmac_key")
+	errInvalidKeySourceType   = errors.New("key_source.type must be k8s_secret, env, file, or bao")
 	errMissingKeySourceConfig = errors.New("key_source config block is missing for the specified type")
 	errInvalidCertificateRef  = errors.New("certificate_ref must be fingerprint or full")
 	errHMACNoCertRef          = errors.New("certificate_ref must not be set for HMAC-SHA256 (symmetric algorithm has no certificate)")
@@ -55,46 +54,58 @@ type KeySourceConfig struct {
 	Env       *EnvKeyConfig    `mapstructure:"env"`
 	File      *FileKeyConfig   `mapstructure:"file"`
 	Bao       *BaoKeyConfig    `mapstructure:"bao"`
-	HMACKey   *HMACKeyConfig   `mapstructure:"hmac_key"`
 }
 
+// K8sSecretConfig configures a Kubernetes Secret key source.
+// For asymmetric algorithms set CertKey and KeyKey.
+// For HMAC-SHA256 set HMACKey instead.
 type K8sSecretConfig struct {
 	Name      string `mapstructure:"name"`
 	Namespace string `mapstructure:"namespace"`
-	CertKey   string `mapstructure:"cert_key"`
-	KeyKey    string `mapstructure:"key_key"`
-	CAKey     string `mapstructure:"ca_key"`
+	// Asymmetric key fields
+	CertKey string `mapstructure:"cert_key"`
+	KeyKey  string `mapstructure:"key_key"`
+	CAKey   string `mapstructure:"ca_key"`
+	// HMAC-SHA256 field
+	HMACKey string `mapstructure:"hmac_key"`
 }
 
+// EnvKeyConfig configures environment-variable key material.
+// For asymmetric algorithms set CertEnvVar and KeyEnvVar.
+// For HMAC-SHA256 set HMACKeyEnvVar instead.
 type EnvKeyConfig struct {
+	// Asymmetric key fields
 	CertEnvVar string `mapstructure:"cert_env_var"`
 	KeyEnvVar  string `mapstructure:"key_env_var"`
+	// HMAC-SHA256 field
+	HMACKeyEnvVar string `mapstructure:"hmac_key_env_var"`
 }
 
+// FileKeyConfig configures file-based key material.
+// For asymmetric algorithms set CertFile and KeyFile.
+// For HMAC-SHA256 set HMACKeyFile instead.
 type FileKeyConfig struct {
+	// Asymmetric key fields
 	CertFile string `mapstructure:"cert_file"`
 	KeyFile  string `mapstructure:"key_file"`
+	// HMAC-SHA256 field
+	HMACKeyFile string `mapstructure:"hmac_key_file"`
 }
 
 // BaoKeyConfig configures the OpenBao (Vault-compatible) key material source.
 // Address and Token are optional: if omitted, the client reads BAO_ADDR and
 // BAO_TOKEN (or any other supported BAO_* environment variables) automatically.
+// For asymmetric algorithms set CertField and KeyField.
+// For HMAC-SHA256 set HMACKeyField instead.
 type BaoKeyConfig struct {
 	Address    string `mapstructure:"address"`
 	Token      string `mapstructure:"token"`
 	SecretPath string `mapstructure:"secret_path"`
-	CertField  string `mapstructure:"cert_field"`
-	KeyField   string `mapstructure:"key_field"`
-}
-
-// HMACKeyConfig configures the symmetric HMAC-SHA256 key source.
-// Exactly one of KeyEnvVar or KeyFile must be set.
-// The key may be raw bytes or base64-encoded.
-type HMACKeyConfig struct {
-	// KeyEnvVar is the name of an environment variable containing the HMAC key.
-	KeyEnvVar string `mapstructure:"key_env_var"`
-	// KeyFile is the path to a file containing the HMAC key.
-	KeyFile string `mapstructure:"key_file"`
+	// Asymmetric key fields
+	CertField string `mapstructure:"cert_field"`
+	KeyField  string `mapstructure:"key_field"`
+	// HMAC-SHA256 field
+	HMACKeyField string `mapstructure:"hmac_key_field"`
 }
 
 func createDefaultConfig() component.Config {
@@ -105,17 +116,19 @@ func createDefaultConfig() component.Config {
 }
 
 func (c *Config) Validate() error {
+	isHMAC := false
 	switch c.Algorithm {
-	case AlgorithmRS256, AlgorithmRS512, AlgorithmES256, AlgorithmEdDSA, AlgorithmHMACSHA256:
-		// valid
+	case AlgorithmRS256, AlgorithmRS512, AlgorithmES256, AlgorithmEdDSA:
+		// valid asymmetric
+	case AlgorithmHMACSHA256:
+		isHMAC = true
 	case "":
 		c.Algorithm = defaultAlgorithm
 	default:
 		return errInvalidAlgorithm
 	}
 
-	if c.Algorithm == AlgorithmHMACSHA256 {
-		// certificate_ref is meaningless for a symmetric algorithm
+	if isHMAC {
 		if c.CertificateRef != "" && c.CertificateRef != defaultCertificateRef {
 			return errHMACNoCertRef
 		}
@@ -135,34 +148,52 @@ func (c *Config) Validate() error {
 		if c.KeySource.K8sSecret.Name == "" {
 			return errors.New("key_source.k8s_secret.name is required")
 		}
-		if c.KeySource.K8sSecret.CertKey == "" {
-			return errors.New("key_source.k8s_secret.cert_key is required")
-		}
-		if c.KeySource.K8sSecret.KeyKey == "" {
-			return errors.New("key_source.k8s_secret.key_key is required")
-		}
 		if c.KeySource.K8sSecret.Namespace == "" {
 			c.KeySource.K8sSecret.Namespace = "default"
+		}
+		if isHMAC {
+			if c.KeySource.K8sSecret.HMACKey == "" {
+				return errors.New("key_source.k8s_secret.hmac_key is required for HMAC-SHA256")
+			}
+		} else {
+			if c.KeySource.K8sSecret.CertKey == "" {
+				return errors.New("key_source.k8s_secret.cert_key is required")
+			}
+			if c.KeySource.K8sSecret.KeyKey == "" {
+				return errors.New("key_source.k8s_secret.key_key is required")
+			}
 		}
 	case KeySourceEnv:
 		if c.KeySource.Env == nil {
 			return errMissingKeySourceConfig
 		}
-		if c.KeySource.Env.CertEnvVar == "" {
-			return errors.New("key_source.env.cert_env_var is required")
-		}
-		if c.KeySource.Env.KeyEnvVar == "" {
-			return errors.New("key_source.env.key_env_var is required")
+		if isHMAC {
+			if c.KeySource.Env.HMACKeyEnvVar == "" {
+				return errors.New("key_source.env.hmac_key_env_var is required for HMAC-SHA256")
+			}
+		} else {
+			if c.KeySource.Env.CertEnvVar == "" {
+				return errors.New("key_source.env.cert_env_var is required")
+			}
+			if c.KeySource.Env.KeyEnvVar == "" {
+				return errors.New("key_source.env.key_env_var is required")
+			}
 		}
 	case KeySourceFile:
 		if c.KeySource.File == nil {
 			return errMissingKeySourceConfig
 		}
-		if c.KeySource.File.CertFile == "" {
-			return errors.New("key_source.file.cert_file is required")
-		}
-		if c.KeySource.File.KeyFile == "" {
-			return errors.New("key_source.file.key_file is required")
+		if isHMAC {
+			if c.KeySource.File.HMACKeyFile == "" {
+				return errors.New("key_source.file.hmac_key_file is required for HMAC-SHA256")
+			}
+		} else {
+			if c.KeySource.File.CertFile == "" {
+				return errors.New("key_source.file.cert_file is required")
+			}
+			if c.KeySource.File.KeyFile == "" {
+				return errors.New("key_source.file.key_file is required")
+			}
 		}
 	case KeySourceBao:
 		if c.KeySource.Bao == nil {
@@ -171,21 +202,17 @@ func (c *Config) Validate() error {
 		if c.KeySource.Bao.SecretPath == "" {
 			return errors.New("key_source.bao.secret_path is required")
 		}
-		if c.KeySource.Bao.CertField == "" {
-			return errors.New("key_source.bao.cert_field is required")
-		}
-		if c.KeySource.Bao.KeyField == "" {
-			return errors.New("key_source.bao.key_field is required")
-		}
-	case KeySourceHMACKey:
-		if c.KeySource.HMACKey == nil {
-			return errMissingKeySourceConfig
-		}
-		if c.KeySource.HMACKey.KeyEnvVar == "" && c.KeySource.HMACKey.KeyFile == "" {
-			return errors.New("key_source.hmac_key requires either key_env_var or key_file")
-		}
-		if c.KeySource.HMACKey.KeyEnvVar != "" && c.KeySource.HMACKey.KeyFile != "" {
-			return errors.New("key_source.hmac_key: set only one of key_env_var or key_file, not both")
+		if isHMAC {
+			if c.KeySource.Bao.HMACKeyField == "" {
+				return errors.New("key_source.bao.hmac_key_field is required for HMAC-SHA256")
+			}
+		} else {
+			if c.KeySource.Bao.CertField == "" {
+				return errors.New("key_source.bao.cert_field is required")
+			}
+			if c.KeySource.Bao.KeyField == "" {
+				return errors.New("key_source.bao.key_field is required")
+			}
 		}
 	default:
 		return errInvalidKeySourceType

@@ -46,12 +46,16 @@ processors:
         cert_file: /etc/otelcol/signing-cert.pem
         key_file:  /etc/otelcol/signing-key.pem
 
-      # --- env provider ---
+      # --- env provider — asymmetric ---
       # env:
       #   cert_env_var: SIGNING_CERT_PEM   # PEM or base64-encoded PEM
       #   key_env_var:  SIGNING_KEY_PEM
 
-      # --- Kubernetes Secret provider ---
+      # --- env provider — HMAC-SHA256 ---
+      # env:
+      #   hmac_key_env_var: SIGNING_HMAC_KEY
+
+      # --- Kubernetes Secret provider — asymmetric ---
       # k8s_secret:
       #   name:      signing-secret
       #   namespace: default              # optional, defaults to "default"
@@ -59,13 +63,24 @@ processors:
       #   key_key:   tls.key
       #   ca_key:    ca.crt              # optional
 
-      # --- OpenBao / Vault provider ---
+      # --- Kubernetes Secret provider — HMAC-SHA256 ---
+      # k8s_secret:
+      #   name:      signing-secret
+      #   namespace: default
+      #   hmac_key:  hmac.key
+
+      # --- OpenBao / Vault provider — asymmetric ---
       # bao:
       #   address:     https://bao.example.com   # optional, falls back to BAO_ADDR
       #   token:       s.xxxx                    # optional, falls back to BAO_TOKEN
       #   secret_path: secret/data/signing
       #   cert_field:  certificate
       #   key_field:   private_key
+
+      # --- OpenBao / Vault provider — HMAC-SHA256 ---
+      # bao:
+      #   secret_path:   secret/data/signing
+      #   hmac_key_field: hmac_key
 ```
 
 ## Key source providers

@@ -101,8 +101,8 @@ func TestLoadConfig(t *testing.T) {
 				Algorithm:      "HMAC-SHA256",
 				CertificateRef: "fingerprint",
 				KeySource: KeySourceConfig{
-					Type:    KeySourceHMACKey,
-					HMACKey: &HMACKeyConfig{KeyEnvVar: "SIGNING_HMAC_KEY"},
+					Type: KeySourceEnv,
+					Env:  &EnvKeyConfig{HMACKeyEnvVar: "SIGNING_HMAC_KEY"},
 				},
 			},
 		},

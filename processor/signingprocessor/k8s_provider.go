@@ -14,7 +14,8 @@ import (
 )
 
 type k8sKeyMaterialProvider struct {
-	reader *certificateReader
+	reader  *certificateReader
+	hmacKey []byte
 }
 
 func newK8sKeyMaterialProvider(ctx context.Context, cfg *K8sSecretConfig, logger *zap.Logger) (KeyMaterialProvider, error) {
@@ -26,35 +27,51 @@ func newK8sKeyMaterialProvider(ctx context.Context, cfg *K8sSecretConfig, logger
 }
 
 func newK8sKeyMaterialProviderWithClient(ctx context.Context, client kubernetes.Interface, cfg *K8sSecretConfig, logger *zap.Logger) (KeyMaterialProvider, error) {
+	// HMAC mode: load only the symmetric key
+	if cfg.HMACKey != "" {
+		data, err := fetchSecretDataWithClient(ctx, client, cfg.Name, cfg.Namespace, cfg.HMACKey, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch HMAC key from k8s secret: %w", err)
+		}
+		key := decodeIfBase64(normalizeLineEndings(data))
+		if len(key) == 0 {
+			return nil, fmt.Errorf("HMAC key in secret %s/%s key %q is empty", cfg.Namespace, cfg.Name, cfg.HMACKey)
+		}
+		return &k8sKeyMaterialProvider{hmacKey: key}, nil
+	}
+
+	// Asymmetric mode: load cert + private key
 	certPEM, err := fetchSecretDataWithClient(ctx, client, cfg.Name, cfg.Namespace, cfg.CertKey, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch certificate from k8s secret: %w", err)
 	}
-
 	keyPEM, err := fetchSecretDataWithClient(ctx, client, cfg.Name, cfg.Namespace, cfg.KeyKey, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch private key from k8s secret: %w", err)
 	}
-
 	certPEM = decodeIfBase64(certPEM)
 	keyPEM = decodeIfBase64(keyPEM)
 	certPEM = normalizeLineEndings(certPEM)
 	keyPEM = normalizeLineEndings(keyPEM)
-
 	reader, err := parseCertificateData(certPEM, keyPEM)
 	if err != nil {
 		return nil, err
 	}
-
 	return &k8sKeyMaterialProvider{reader: reader}, nil
 }
 
 func (p *k8sKeyMaterialProvider) GetPrivateKey() crypto.Signer {
+	if p.reader == nil {
+		return nil
+	}
 	return p.reader.GetPrivateKey()
 }
 
 func (p *k8sKeyMaterialProvider) GetCertificate() *x509.Certificate {
+	if p.reader == nil {
+		return nil
+	}
 	return p.reader.GetCertificate()
 }
 
-func (p *k8sKeyMaterialProvider) GetHMACKey() []byte { return nil }
+func (p *k8sKeyMaterialProvider) GetHMACKey() []byte { return p.hmacKey }
