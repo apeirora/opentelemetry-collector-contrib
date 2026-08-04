@@ -36,7 +36,7 @@ For invalid configuration examples used in tests see
 processors:
   signing:
     # JWA signing algorithm. Default: RS256.
-    # Valid values: RS256, RS512, ES256, EdDSA
+    # Valid values: RS256, RS512, ES256, EdDSA, HMAC-SHA256
     algorithm: RS256
 
     # How to encode the signing certificate in the audit.integrity.certificate
@@ -96,8 +96,8 @@ processors:
 
 | Provider | Description |
 | --- | --- |
-| `file` | Reads PEM-encoded certificate and RSA private key from local files. Supports plain PEM and base64-encoded PEM. |
-| `env` | Reads PEM (or base64 PEM) from environment variables. Useful for container deployments where secrets are injected via env. |
+| `file` | Reads PEM-encoded certificate and private key (RSA, ECDSA, or Ed25519) from local files, or a raw HMAC secret. Supports plain PEM and base64-encoded PEM. |
+| `env` | Reads asymmetric key material (cert + private key) or an HMAC secret from environment variables. Useful for container deployments where secrets are injected via env. |
 | `k8s_secret` | Reads a Kubernetes Secret by name/namespace via the in-cluster or kubeconfig client. |
 | `bao` | Reads key material from an [OpenBao](https://openbao.org/) (Vault-compatible) secret engine. |
 
@@ -107,14 +107,14 @@ processors:
 
 | Attribute | Type | Description |
 |---|---|---|
-| `audit.integrity.value` | string | Base64-encoded RSA PKCS#1 v1.5 signature of the JCS-canonical hash. |
+| `audit.integrity.value` | string | Base64-encoded signature (or MAC for HMAC-SHA256) of the JCS-canonical payload, using the configured algorithm. |
 
 ### Per Resource (set once per ResourceLogs block)
 
 | Attribute | Type | Description |
 | --- | --- | --- |
-| `audit.integrity.algorithm` | string | JWA algorithm identifier: `RS256` (SHA-256) or `RS512` (SHA-512). |
-| `audit.integrity.certificate` | string | Certificate reference: `sha256:<hex>` fingerprint or full base64 DER, depending on `certificate_ref`. |
+| `audit.integrity.algorithm` | string | JWA/IANA algorithm identifier matching the configured `algorithm` field (e.g. `RS256`, `ES256`, `EdDSA`, `HMAC-SHA256`). |
+| `audit.integrity.certificate` | string | Certificate reference: `sha256:<hex>` fingerprint or full base64 DER, depending on `certificate_ref`. Not set for HMAC-SHA256. |
 
 ## Signed payload
 
@@ -138,7 +138,7 @@ receivers:
 
 processors:
   signing:
-    hash_algorithm: SHA256
+    algorithm: RS256
     certificate_ref: fingerprint
     key_source:
       type: file

@@ -5,16 +5,13 @@ package signingprocessor // import "github.com/open-telemetry/opentelemetry-coll
 
 import (
 	"context"
-	"crypto"
-	"crypto/x509"
 	"fmt"
 
 	openbao "github.com/openbao/openbao/api/v2"
 )
 
 type baoKeyMaterialProvider struct {
-	reader  *certificateReader
-	hmacKey []byte
+	baseKeyMaterialProvider
 }
 
 // newBaoKeyMaterialProvider reads key material from an OpenBao (or Vault-compatible)
@@ -62,7 +59,7 @@ func newBaoKeyMaterialProviderWithAddress(ctx context.Context, cfg *BaoKeyConfig
 		if len(key) == 0 {
 			return nil, fmt.Errorf("HMAC key field %q in secret %q is empty after decoding", cfg.HMACKeyField, cfg.SecretPath)
 		}
-		return &baoKeyMaterialProvider{hmacKey: key}, nil
+		return &baoKeyMaterialProvider{baseKeyMaterialProvider{hmacKey: key}}, nil
 	}
 
 	// Asymmetric mode: load cert + private key fields
@@ -82,24 +79,8 @@ func newBaoKeyMaterialProviderWithAddress(ctx context.Context, cfg *BaoKeyConfig
 	if err != nil {
 		return nil, err
 	}
-	return &baoKeyMaterialProvider{reader: reader}, nil
+	return &baoKeyMaterialProvider{baseKeyMaterialProvider{reader: reader}}, nil
 }
-
-func (p *baoKeyMaterialProvider) GetPrivateKey() crypto.Signer {
-	if p.reader == nil {
-		return nil
-	}
-	return p.reader.GetPrivateKey()
-}
-
-func (p *baoKeyMaterialProvider) GetCertificate() *x509.Certificate {
-	if p.reader == nil {
-		return nil
-	}
-	return p.reader.GetCertificate()
-}
-
-func (p *baoKeyMaterialProvider) GetHMACKey() []byte { return p.hmacKey }
 
 func secretField(data map[string]interface{}, field string) (string, error) {
 	raw, ok := data[field]

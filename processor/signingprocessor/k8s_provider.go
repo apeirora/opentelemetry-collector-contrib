@@ -5,8 +5,6 @@ package signingprocessor // import "github.com/open-telemetry/opentelemetry-coll
 
 import (
 	"context"
-	"crypto"
-	"crypto/x509"
 	"fmt"
 
 	"go.uber.org/zap"
@@ -14,8 +12,7 @@ import (
 )
 
 type k8sKeyMaterialProvider struct {
-	reader  *certificateReader
-	hmacKey []byte
+	baseKeyMaterialProvider
 }
 
 func newK8sKeyMaterialProvider(ctx context.Context, cfg *K8sSecretConfig, logger *zap.Logger) (KeyMaterialProvider, error) {
@@ -37,7 +34,7 @@ func newK8sKeyMaterialProviderWithClient(ctx context.Context, client kubernetes.
 		if len(key) == 0 {
 			return nil, fmt.Errorf("HMAC key in secret %s/%s key %q is empty", cfg.Namespace, cfg.Name, cfg.HMACKey)
 		}
-		return &k8sKeyMaterialProvider{hmacKey: key}, nil
+		return &k8sKeyMaterialProvider{baseKeyMaterialProvider{hmacKey: key}}, nil
 	}
 
 	// Asymmetric mode: load cert + private key
@@ -57,21 +54,5 @@ func newK8sKeyMaterialProviderWithClient(ctx context.Context, client kubernetes.
 	if err != nil {
 		return nil, err
 	}
-	return &k8sKeyMaterialProvider{reader: reader}, nil
+	return &k8sKeyMaterialProvider{baseKeyMaterialProvider{reader: reader}}, nil
 }
-
-func (p *k8sKeyMaterialProvider) GetPrivateKey() crypto.Signer {
-	if p.reader == nil {
-		return nil
-	}
-	return p.reader.GetPrivateKey()
-}
-
-func (p *k8sKeyMaterialProvider) GetCertificate() *x509.Certificate {
-	if p.reader == nil {
-		return nil
-	}
-	return p.reader.GetCertificate()
-}
-
-func (p *k8sKeyMaterialProvider) GetHMACKey() []byte { return p.hmacKey }

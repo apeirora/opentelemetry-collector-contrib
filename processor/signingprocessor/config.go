@@ -129,7 +129,7 @@ func (c *Config) Validate() error {
 	}
 
 	if isHMAC {
-		if c.CertificateRef != "" && c.CertificateRef != defaultCertificateRef {
+		if c.CertificateRef != "" {
 			return errHMACNoCertRef
 		}
 	} else {
@@ -232,11 +232,6 @@ func (c *Config) GetHash() crypto.Hash {
 	default: // RS256, ES256, HMAC-SHA256
 		return crypto.SHA256
 	}
-}
-
-// GetJWAAlgorithm returns the JWA/IANA algorithm identifier — identical to Algorithm.
-func (c *Config) GetJWAAlgorithm() string {
-	return c.Algorithm
 }
 
 var _ component.Config = (*Config)(nil)

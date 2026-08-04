@@ -70,7 +70,7 @@ func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settin
 		nextLogs:     nextLogs,
 		provider:     provider,
 		hashFunc:     hashFunc,
-		jwaAlgorithm: cfg.GetJWAAlgorithm(),
+		jwaAlgorithm: cfg.Algorithm,
 		certRef:      certRef,
 	}, nil
 }
@@ -84,6 +84,7 @@ func (p *signingProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error 
 	for i := 0; i < resourceLogs.Len(); i++ {
 		resourceLog := resourceLogs.At(i)
 
+		signed := 0
 		scopeLogs := resourceLog.ScopeLogs()
 		for j := 0; j < scopeLogs.Len(); j++ {
 			scopeLog := scopeLogs.At(j)
@@ -93,16 +94,19 @@ func (p *signingProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error 
 				if err := p.processLogRecord(logRecord); err != nil {
 					return fmt.Errorf("failed to process log record: %w", err)
 				}
+				signed++
 			}
 		}
 
 		// audit.integrity.algorithm and audit.integrity.certificate are Resource-level
 		// attributes per the audit logging spec. Set them only after all records in
-		// this ResourceLogs block have been signed successfully.
-		// audit.integrity.certificate is omitted for HMAC-SHA256 (no certificate).
-		resourceLog.Resource().Attributes().PutStr("audit.integrity.algorithm", p.jwaAlgorithm)
-		if p.certRef != "" {
-			resourceLog.Resource().Attributes().PutStr("audit.integrity.certificate", p.certRef)
+		// this ResourceLogs block have been signed successfully, and only when at
+		// least one record was actually signed.
+		if signed > 0 {
+			resourceLog.Resource().Attributes().PutStr("audit.integrity.algorithm", p.jwaAlgorithm)
+			if p.certRef != "" {
+				resourceLog.Resource().Attributes().PutStr("audit.integrity.certificate", p.certRef)
+			}
 		}
 	}
 

@@ -116,10 +116,22 @@ func TestConfigValidateHMAC(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "certificate_ref explicitly set — rejected",
+			name: "certificate_ref 'full' — rejected",
 			cfg: Config{
 				Algorithm:      AlgorithmHMACSHA256,
 				CertificateRef: "full",
+				KeySource: KeySourceConfig{
+					Type: KeySourceEnv,
+					Env:  &EnvKeyConfig{HMACKeyEnvVar: "K"},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "certificate_ref 'fingerprint' — also rejected (any non-empty value invalid for HMAC)",
+			cfg: Config{
+				Algorithm:      AlgorithmHMACSHA256,
+				CertificateRef: "fingerprint",
 				KeySource: KeySourceConfig{
 					Type: KeySourceEnv,
 					Env:  &EnvKeyConfig{HMACKeyEnvVar: "K"},

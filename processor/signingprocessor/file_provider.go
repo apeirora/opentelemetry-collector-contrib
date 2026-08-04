@@ -4,15 +4,12 @@
 package signingprocessor // import "github.com/open-telemetry/opentelemetry-collector-contrib/processor/signingprocessor"
 
 import (
-	"crypto"
-	"crypto/x509"
 	"fmt"
 	"os"
 )
 
 type fileKeyMaterialProvider struct {
-	reader  *certificateReader
-	hmacKey []byte
+	baseKeyMaterialProvider
 }
 
 func newFileKeyMaterialProvider(cfg *FileKeyConfig) (KeyMaterialProvider, error) {
@@ -26,7 +23,7 @@ func newFileKeyMaterialProvider(cfg *FileKeyConfig) (KeyMaterialProvider, error)
 		if len(key) == 0 {
 			return nil, fmt.Errorf("HMAC key file %q is empty", cfg.HMACKeyFile)
 		}
-		return &fileKeyMaterialProvider{hmacKey: key}, nil
+		return &fileKeyMaterialProvider{baseKeyMaterialProvider{hmacKey: key}}, nil
 	}
 
 	// Asymmetric mode: load cert + private key
@@ -46,21 +43,5 @@ func newFileKeyMaterialProvider(cfg *FileKeyConfig) (KeyMaterialProvider, error)
 	if err != nil {
 		return nil, err
 	}
-	return &fileKeyMaterialProvider{reader: reader}, nil
+	return &fileKeyMaterialProvider{baseKeyMaterialProvider{reader: reader}}, nil
 }
-
-func (p *fileKeyMaterialProvider) GetPrivateKey() crypto.Signer {
-	if p.reader == nil {
-		return nil
-	}
-	return p.reader.GetPrivateKey()
-}
-
-func (p *fileKeyMaterialProvider) GetCertificate() *x509.Certificate {
-	if p.reader == nil {
-		return nil
-	}
-	return p.reader.GetCertificate()
-}
-
-func (p *fileKeyMaterialProvider) GetHMACKey() []byte { return p.hmacKey }

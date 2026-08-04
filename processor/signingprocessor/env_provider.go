@@ -4,15 +4,12 @@
 package signingprocessor // import "github.com/open-telemetry/opentelemetry-collector-contrib/processor/signingprocessor"
 
 import (
-	"crypto"
-	"crypto/x509"
 	"fmt"
 	"os"
 )
 
 type envKeyMaterialProvider struct {
-	reader  *certificateReader
-	hmacKey []byte
+	baseKeyMaterialProvider
 }
 
 func newEnvKeyMaterialProvider(cfg *EnvKeyConfig) (KeyMaterialProvider, error) {
@@ -23,7 +20,7 @@ func newEnvKeyMaterialProvider(cfg *EnvKeyConfig) (KeyMaterialProvider, error) {
 			return nil, fmt.Errorf("environment variable %q is not set or empty", cfg.HMACKeyEnvVar)
 		}
 		key := decodeIfBase64(normalizeLineEndings([]byte(raw)))
-		return &envKeyMaterialProvider{hmacKey: key}, nil
+		return &envKeyMaterialProvider{baseKeyMaterialProvider{hmacKey: key}}, nil
 	}
 
 	// Asymmetric mode: load cert + private key
@@ -43,21 +40,5 @@ func newEnvKeyMaterialProvider(cfg *EnvKeyConfig) (KeyMaterialProvider, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &envKeyMaterialProvider{reader: reader}, nil
+	return &envKeyMaterialProvider{baseKeyMaterialProvider{reader: reader}}, nil
 }
-
-func (p *envKeyMaterialProvider) GetPrivateKey() crypto.Signer {
-	if p.reader == nil {
-		return nil
-	}
-	return p.reader.GetPrivateKey()
-}
-
-func (p *envKeyMaterialProvider) GetCertificate() *x509.Certificate {
-	if p.reader == nil {
-		return nil
-	}
-	return p.reader.GetCertificate()
-}
-
-func (p *envKeyMaterialProvider) GetHMACKey() []byte { return p.hmacKey }

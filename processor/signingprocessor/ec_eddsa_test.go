@@ -145,14 +145,6 @@ func TestConfigGetHash(t *testing.T) {
 	}
 }
 
-func TestConfigGetJWAAlgorithm(t *testing.T) {
-	for _, alg := range []string{AlgorithmRS256, AlgorithmRS512, AlgorithmES256, AlgorithmEdDSA} {
-		if got := (&Config{Algorithm: alg}).GetJWAAlgorithm(); got != alg {
-			t.Errorf("GetJWAAlgorithm() = %q, want %q", got, alg)
-		}
-	}
-}
-
 // ---------------------------------------------------------------------------
 // certificate_reader — EC and Ed25519 key parsing
 // ---------------------------------------------------------------------------

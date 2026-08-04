@@ -1,6 +1,6 @@
 # Signing processor — invalid configurations used in negative tests.
 
-# Missing key_source block.
+# Missing key_source.type (empty type triggers errInvalidKeySourceType).
 signing/missing_key_source:
   algorithm: RS256
 

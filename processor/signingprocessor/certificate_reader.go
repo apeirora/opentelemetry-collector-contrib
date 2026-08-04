@@ -7,6 +7,7 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
@@ -30,6 +31,7 @@ func (cr *certificateReader) GetCertificate() *x509.Certificate {
 	return cr.cert
 }
 
+// GetHMACKey returns nil — certificateReader holds asymmetric key material only.
 func (cr *certificateReader) GetHMACKey() []byte { return nil }
 
 // parseCertificateData parses PEM-encoded certificate and private key bytes
@@ -98,6 +100,10 @@ func parseCertificateData(certPEM, keyPEM []byte) (*certificateReader, error) {
 
 	// Verify key type matches certificate's public key algorithm.
 	switch key.(type) {
+	case *rsa.PrivateKey:
+		if cert.PublicKeyAlgorithm != x509.RSA {
+			return nil, fmt.Errorf("RSA private key does not match certificate public key algorithm %s", cert.PublicKeyAlgorithm)
+		}
 	case *ecdsa.PrivateKey:
 		if cert.PublicKeyAlgorithm != x509.ECDSA {
 			return nil, fmt.Errorf("EC private key does not match certificate public key algorithm %s", cert.PublicKeyAlgorithm)
