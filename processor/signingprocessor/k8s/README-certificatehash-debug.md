@@ -10,7 +10,6 @@ The signing processor adds cryptographic integrity verification to log records b
 - Signing the hash with an RSA private key using RSA PKCS1v15 (JWA: `RS256` or `RS512`)
 - Adding the following attributes per the OTel Audit Logging spec:
   - `audit.integrity.value` — Base64-encoded RSA signature (record-level)
-  - `audit.integrity.hash` — Base64-encoded hash of the signed content (record-level)
   - `audit.integrity.algorithm` — JWA algorithm identifier, e.g. `RS256` (resource-level)
   - `audit.integrity.certificate` — Certificate reference: `sha256:<hex>` fingerprint by default, or full Base64 DER if `certificate_ref: full` (resource-level)
 
@@ -118,7 +117,6 @@ processors:
 
 When logs are processed, you should see in the collector logs (debug exporter output) that each log record has:
 
-- `audit.integrity.hash` - Base64-encoded hash
 - `audit.integrity.value` - Base64-encoded RSA signature
 
 ## Troubleshooting

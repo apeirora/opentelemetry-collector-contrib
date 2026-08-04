@@ -70,6 +70,6 @@ else
 fi
 
 echo ""
-echo "Checking collector logs for hash and signature..."
+echo "Checking collector logs for signatures..."
 sleep 2
 kubectl logs -n "$NAMESPACE" -l app="$SERVICE_NAME" --tail=50 | grep -i "audit.integrity" || true

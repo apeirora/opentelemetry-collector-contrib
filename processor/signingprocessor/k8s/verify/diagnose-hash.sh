@@ -12,7 +12,7 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "=== Hash Verification Diagnostic ==="
+echo "=== Verification Diagnostic ==="
 echo ""
 
 if [ ! -f "$LOG_FILE" ]; then
@@ -37,10 +37,6 @@ echo ""
 
 echo "Attributes (excluding signature):"
 jq -r '.attributes | to_entries[] | select(.key != "audit.integrity.value") | "  \(.key): \(.value)"' "$LOG_FILE"
-echo ""
-
-echo "Hash from log:"
-echo "  (recomputed at verification time — not stored as attribute)"
 echo ""
 
 echo "Signature from log (first 50 chars):"
