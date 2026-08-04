@@ -30,6 +30,8 @@ func (cr *certificateReader) GetCertificate() *x509.Certificate {
 	return cr.cert
 }
 
+func (cr *certificateReader) GetHMACKey() []byte { return nil }
+
 // parseCertificateData parses PEM-encoded certificate and private key bytes
 // into a certificateReader. Supported key types: RSA (PKCS1 and PKCS8),
 // ECDSA (SEC1 and PKCS8), and Ed25519 (PKCS8).

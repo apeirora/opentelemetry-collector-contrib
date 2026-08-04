@@ -56,3 +56,5 @@ func (p *k8sKeyMaterialProvider) GetPrivateKey() crypto.Signer {
 func (p *k8sKeyMaterialProvider) GetCertificate() *x509.Certificate {
 	return p.reader.GetCertificate()
 }
+
+func (p *k8sKeyMaterialProvider) GetHMACKey() []byte { return nil }

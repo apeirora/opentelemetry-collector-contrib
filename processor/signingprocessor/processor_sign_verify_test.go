@@ -31,6 +31,7 @@ type staticProvider struct {
 
 func (s *staticProvider) GetPrivateKey() crypto.Signer { return s.key }
 func (s *staticProvider) GetCertificate() *x509.Certificate { return s.cert }
+func (s *staticProvider) GetHMACKey() []byte                   { return nil }
 
 func newTestProvider(t *testing.T) *staticProvider {
 	t.Helper()

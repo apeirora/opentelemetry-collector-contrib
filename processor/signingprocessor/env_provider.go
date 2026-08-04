@@ -45,3 +45,5 @@ func (p *envKeyMaterialProvider) GetPrivateKey() crypto.Signer {
 func (p *envKeyMaterialProvider) GetCertificate() *x509.Certificate {
 	return p.reader.GetCertificate()
 }
+
+func (p *envKeyMaterialProvider) GetHMACKey() []byte { return nil }

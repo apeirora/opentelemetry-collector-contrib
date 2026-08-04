@@ -8,12 +8,19 @@ import (
 	"crypto/x509"
 )
 
-// KeyMaterialProvider supplies the private signing key and certificate used for signing.
-// The private key is returned as crypto.Signer, which is satisfied by *rsa.PrivateKey,
-// *ecdsa.PrivateKey, and ed25519.PrivateKey from the Go standard library.
-// Implementations may load key material from Kubernetes secrets, environment variables,
-// files, or any other source.
+// KeyMaterialProvider supplies the key material used for signing.
+//
+// For asymmetric algorithms (RS256, RS512, ES256, EdDSA):
+//   - GetPrivateKey() returns the signing key (implements crypto.Signer)
+//   - GetCertificate() returns the X.509 certificate for the public key
+//   - GetHMACKey() returns nil
+//
+// For HMAC-SHA256:
+//   - GetHMACKey() returns the raw symmetric secret
+//   - GetPrivateKey() returns nil
+//   - GetCertificate() returns nil
 type KeyMaterialProvider interface {
 	GetPrivateKey() crypto.Signer
 	GetCertificate() *x509.Certificate
+	GetHMACKey() []byte
 }

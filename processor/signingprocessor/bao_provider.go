@@ -104,3 +104,5 @@ func secretField(data map[string]interface{}, field string) (string, error) {
 	}
 	return s, nil
 }
+
+func (p *baoKeyMaterialProvider) GetHMACKey() []byte { return nil }

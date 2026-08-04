@@ -44,3 +44,11 @@ signing/bao:
       secret_path: secret/data/signing
       cert_field:  certificate
       key_field:   private_key
+
+# HMAC-SHA256 with key from environment variable.
+signing/hmac:
+  algorithm: HMAC-SHA256
+  key_source:
+    type: hmac_key
+    hmac_key:
+      key_env_var: SIGNING_HMAC_KEY

@@ -71,6 +71,9 @@ func newKeyMaterialProvider(ctx context.Context, cfg *Config, logger *zap.Logger
 			zap.String("secret_path", cfg.KeySource.Bao.SecretPath),
 		)
 		return newBaoKeyMaterialProvider(ctx, cfg.KeySource.Bao)
+	case KeySourceHMACKey:
+		logger.Info("Initializing HMAC key material provider")
+		return newHMACKeyMaterialProvider(cfg.KeySource.HMACKey)
 	default:
 		return nil, fmt.Errorf("unknown key_source.type: %q", cfg.KeySource.Type)
 	}

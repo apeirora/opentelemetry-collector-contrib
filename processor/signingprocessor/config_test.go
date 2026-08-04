@@ -95,6 +95,17 @@ func TestLoadConfig(t *testing.T) {
 				},
 			},
 		},
+		{
+			id: component.NewIDWithName(component.MustNewType("signing"), "hmac"),
+			expected: &Config{
+				Algorithm:      "HMAC-SHA256",
+				CertificateRef: "fingerprint",
+				KeySource: KeySourceConfig{
+					Type:    KeySourceHMACKey,
+					HMACKey: &HMACKeyConfig{KeyEnvVar: "SIGNING_HMAC_KEY"},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {

@@ -14,32 +14,37 @@ const (
 	defaultAlgorithm      = "RS256"
 	defaultCertificateRef = "fingerprint"
 
-	// Algorithm constants — JWA identifiers (RFC 7518 / RFC 8037).
-	AlgorithmRS256 = "RS256"
-	AlgorithmRS512 = "RS512"
-	AlgorithmES256 = "ES256"
-	AlgorithmEdDSA = "EdDSA"
+	// Algorithm constants — JWA identifiers (RFC 7518 / RFC 8037 / IANA).
+	AlgorithmRS256     = "RS256"
+	AlgorithmRS512     = "RS512"
+	AlgorithmES256     = "ES256"
+	AlgorithmEdDSA     = "EdDSA"
+	AlgorithmHMACSHA256 = "HMAC-SHA256"
 
 	KeySourceK8sSecret = "k8s_secret"
 	KeySourceEnv       = "env"
 	KeySourceFile      = "file"
 	KeySourceBao       = "bao"
+	KeySourceHMACKey   = "hmac_key"
 
 	CertificateRefFingerprint = "fingerprint"
 	CertificateRefFull        = "full"
 )
 
 var (
-	errInvalidAlgorithm       = errors.New("algorithm must be RS256, RS512, ES256, or EdDSA")
-	errInvalidKeySourceType   = errors.New("key_source.type must be k8s_secret, env, file, or bao")
+	errInvalidAlgorithm       = errors.New("algorithm must be RS256, RS512, ES256, EdDSA, or HMAC-SHA256")
+	errInvalidKeySourceType   = errors.New("key_source.type must be k8s_secret, env, file, bao, or hmac_key")
 	errMissingKeySourceConfig = errors.New("key_source config block is missing for the specified type")
 	errInvalidCertificateRef  = errors.New("certificate_ref must be fingerprint or full")
+	errHMACNoCertRef          = errors.New("certificate_ref must not be set for HMAC-SHA256 (symmetric algorithm has no certificate)")
 )
 
 type Config struct {
-	// Algorithm is the JWA signing algorithm. Valid values: RS256, RS512, ES256, EdDSA.
-	// Default: RS256.
-	Algorithm      string          `mapstructure:"algorithm"`
+	// Algorithm is the JWA signing algorithm.
+	// Valid values: RS256, RS512, ES256, EdDSA, HMAC-SHA256. Default: RS256.
+	Algorithm string `mapstructure:"algorithm"`
+	// CertificateRef controls how the certificate is encoded in the
+	// audit.integrity.certificate resource attribute. Not used for HMAC-SHA256.
 	CertificateRef string          `mapstructure:"certificate_ref"`
 	KeySource      KeySourceConfig `mapstructure:"key_source"`
 }
@@ -50,6 +55,7 @@ type KeySourceConfig struct {
 	Env       *EnvKeyConfig    `mapstructure:"env"`
 	File      *FileKeyConfig   `mapstructure:"file"`
 	Bao       *BaoKeyConfig    `mapstructure:"bao"`
+	HMACKey   *HMACKeyConfig   `mapstructure:"hmac_key"`
 }
 
 type K8sSecretConfig struct {
@@ -81,6 +87,16 @@ type BaoKeyConfig struct {
 	KeyField   string `mapstructure:"key_field"`
 }
 
+// HMACKeyConfig configures the symmetric HMAC-SHA256 key source.
+// Exactly one of KeyEnvVar or KeyFile must be set.
+// The key may be raw bytes or base64-encoded.
+type HMACKeyConfig struct {
+	// KeyEnvVar is the name of an environment variable containing the HMAC key.
+	KeyEnvVar string `mapstructure:"key_env_var"`
+	// KeyFile is the path to a file containing the HMAC key.
+	KeyFile string `mapstructure:"key_file"`
+}
+
 func createDefaultConfig() component.Config {
 	return &Config{
 		Algorithm:      defaultAlgorithm,
@@ -90,7 +106,7 @@ func createDefaultConfig() component.Config {
 
 func (c *Config) Validate() error {
 	switch c.Algorithm {
-	case AlgorithmRS256, AlgorithmRS512, AlgorithmES256, AlgorithmEdDSA:
+	case AlgorithmRS256, AlgorithmRS512, AlgorithmES256, AlgorithmEdDSA, AlgorithmHMACSHA256:
 		// valid
 	case "":
 		c.Algorithm = defaultAlgorithm
@@ -98,10 +114,17 @@ func (c *Config) Validate() error {
 		return errInvalidAlgorithm
 	}
 
-	if c.CertificateRef == "" {
-		c.CertificateRef = defaultCertificateRef
-	} else if c.CertificateRef != CertificateRefFingerprint && c.CertificateRef != CertificateRefFull {
-		return errInvalidCertificateRef
+	if c.Algorithm == AlgorithmHMACSHA256 {
+		// certificate_ref is meaningless for a symmetric algorithm
+		if c.CertificateRef != "" && c.CertificateRef != defaultCertificateRef {
+			return errHMACNoCertRef
+		}
+	} else {
+		if c.CertificateRef == "" {
+			c.CertificateRef = defaultCertificateRef
+		} else if c.CertificateRef != CertificateRefFingerprint && c.CertificateRef != CertificateRefFull {
+			return errInvalidCertificateRef
+		}
 	}
 
 	switch c.KeySource.Type {
@@ -154,6 +177,16 @@ func (c *Config) Validate() error {
 		if c.KeySource.Bao.KeyField == "" {
 			return errors.New("key_source.bao.key_field is required")
 		}
+	case KeySourceHMACKey:
+		if c.KeySource.HMACKey == nil {
+			return errMissingKeySourceConfig
+		}
+		if c.KeySource.HMACKey.KeyEnvVar == "" && c.KeySource.HMACKey.KeyFile == "" {
+			return errors.New("key_source.hmac_key requires either key_env_var or key_file")
+		}
+		if c.KeySource.HMACKey.KeyEnvVar != "" && c.KeySource.HMACKey.KeyFile != "" {
+			return errors.New("key_source.hmac_key: set only one of key_env_var or key_file, not both")
+		}
 	default:
 		return errInvalidKeySourceType
 	}
@@ -161,20 +194,20 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// GetHash returns the crypto.Hash for pre-hashing algorithms (RS256, RS512, ES256).
-// Returns crypto.Hash(0) for EdDSA, which hashes internally.
+// GetHash returns the crypto.Hash for the configured algorithm.
+// Returns crypto.Hash(0) for EdDSA (hashes internally).
 func (c *Config) GetHash() crypto.Hash {
 	switch c.Algorithm {
 	case AlgorithmRS512:
 		return crypto.SHA512
 	case AlgorithmEdDSA:
 		return crypto.Hash(0)
-	default: // RS256, ES256
+	default: // RS256, ES256, HMAC-SHA256
 		return crypto.SHA256
 	}
 }
 
-// GetJWAAlgorithm returns the JWA algorithm identifier — identical to Algorithm.
+// GetJWAAlgorithm returns the JWA/IANA algorithm identifier — identical to Algorithm.
 func (c *Config) GetJWAAlgorithm() string {
 	return c.Algorithm
 }

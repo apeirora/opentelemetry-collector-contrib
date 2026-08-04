@@ -139,6 +139,7 @@ type faultyProvider struct{}
 
 func (f *faultyProvider) GetPrivateKey() crypto.Signer    { return nil }
 func (f *faultyProvider) GetCertificate() *x509.Certificate { return nil }
+func (f *faultyProvider) GetHMACKey() []byte                   { return nil }
 
 var _ KeyMaterialProvider = (*faultyProvider)(nil)
 

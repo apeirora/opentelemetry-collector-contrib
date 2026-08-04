@@ -8,6 +8,7 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -55,9 +56,12 @@ func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settin
 		// EdDSA (crypto.Hash(0)): no pre-hashing; hashFunc left nil
 	}
 
-	certRef, err := buildCertificateRef(provider, cfg.CertificateRef)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build certificate reference: %w", err)
+	var certRef string
+	if cfg.Algorithm != AlgorithmHMACSHA256 {
+		certRef, err = buildCertificateRef(provider, cfg.CertificateRef)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build certificate reference: %w", err)
+		}
 	}
 
 	return &signingProcessor{
@@ -95,8 +99,11 @@ func (p *signingProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error 
 		// audit.integrity.algorithm and audit.integrity.certificate are Resource-level
 		// attributes per the audit logging spec. Set them only after all records in
 		// this ResourceLogs block have been signed successfully.
+		// audit.integrity.certificate is omitted for HMAC-SHA256 (no certificate).
 		resourceLog.Resource().Attributes().PutStr("audit.integrity.algorithm", p.jwaAlgorithm)
-		resourceLog.Resource().Attributes().PutStr("audit.integrity.certificate", p.certRef)
+		if p.certRef != "" {
+			resourceLog.Resource().Attributes().PutStr("audit.integrity.certificate", p.certRef)
+		}
 	}
 
 	return p.nextLogs.ConsumeLogs(ctx, ld)
@@ -123,10 +130,9 @@ func (p *signingProcessor) processLogRecord(lr plog.LogRecord) error {
 
 // sign produces a signature over payload using the configured JWA algorithm.
 // For RS256/RS512/ES256 it hashes payload first; for EdDSA it passes the raw
-// message because ed25519 hashes internally (SHA-512).
+// message because ed25519 hashes internally (SHA-512); for HMAC-SHA256 it
+// computes an HMAC-SHA256 MAC.
 func (p *signingProcessor) sign(payload []byte) ([]byte, error) {
-	privateKey := p.provider.GetPrivateKey()
-
 	switch p.config.Algorithm {
 	case AlgorithmRS256, AlgorithmRS512:
 		h := p.hashFunc()
@@ -134,6 +140,7 @@ func (p *signingProcessor) sign(payload []byte) ([]byte, error) {
 			return nil, fmt.Errorf("failed to compute hash: %w", err)
 		}
 		hashBytes := h.Sum(nil)
+		privateKey := p.provider.GetPrivateKey()
 		rsaKey, ok := privateKey.(*rsa.PrivateKey)
 		if !ok {
 			return nil, fmt.Errorf("algorithm %s requires an RSA private key", p.config.Algorithm)
@@ -146,6 +153,7 @@ func (p *signingProcessor) sign(payload []byte) ([]byte, error) {
 			return nil, fmt.Errorf("failed to compute hash: %w", err)
 		}
 		hashBytes := h.Sum(nil)
+		privateKey := p.provider.GetPrivateKey()
 		ecKey, ok := privateKey.(*ecdsa.PrivateKey)
 		if !ok {
 			return nil, fmt.Errorf("algorithm ES256 requires an ECDSA private key")
@@ -153,12 +161,24 @@ func (p *signingProcessor) sign(payload []byte) ([]byte, error) {
 		return ecdsa.SignASN1(rand.Reader, ecKey, hashBytes)
 
 	case AlgorithmEdDSA:
+		privateKey := p.provider.GetPrivateKey()
 		edKey, ok := privateKey.(ed25519.PrivateKey)
 		if !ok {
 			return nil, fmt.Errorf("algorithm EdDSA requires an Ed25519 private key")
 		}
 		// Ed25519 signs the raw message; no pre-hashing.
 		return ed25519.Sign(edKey, payload), nil
+
+	case AlgorithmHMACSHA256:
+		key := p.provider.GetHMACKey()
+		if len(key) == 0 {
+			return nil, fmt.Errorf("algorithm HMAC-SHA256 requires a non-empty HMAC key")
+		}
+		mac := hmac.New(sha256.New, key)
+		if _, err := mac.Write(payload); err != nil {
+			return nil, fmt.Errorf("failed to compute HMAC: %w", err)
+		}
+		return mac.Sum(nil), nil
 
 	default:
 		return nil, fmt.Errorf("unsupported algorithm: %s", p.config.Algorithm)
