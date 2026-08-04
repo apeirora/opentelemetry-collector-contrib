@@ -11,3 +11,8 @@ status:
 
 tests:
   config:
+    key_source:
+      type: file
+      file:
+        cert_file: testdata/test-cert.pem
+        key_file:  testdata/test-key.pem
