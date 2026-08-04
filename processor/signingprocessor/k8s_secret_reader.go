@@ -18,7 +18,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-func getK8sClient() (*kubernetes.Clientset, error) {
+func getK8sClient() (kubernetes.Interface, error) {
 	var config *rest.Config
 	var err error
 
@@ -58,18 +58,22 @@ func getK8sClient() (*kubernetes.Clientset, error) {
 }
 
 func fetchSecretData(ctx context.Context, secretName, namespace, key string, logger *zap.Logger) ([]byte, error) {
-	if logger != nil {
-		logger.Info("Fetching secret data",
-			zap.String("secret", fmt.Sprintf("%s/%s", namespace, secretName)),
-			zap.String("key", key),
-		)
-	}
-	clientset, err := getK8sClient()
+	client, err := getK8sClient()
 	if err != nil {
 		if logger != nil {
 			logger.Error("Failed to create k8s client", zap.Error(err))
 		}
 		return nil, fmt.Errorf("failed to create k8s client: %w", err)
+	}
+	return fetchSecretDataWithClient(ctx, client, secretName, namespace, key, logger)
+}
+
+func fetchSecretDataWithClient(ctx context.Context, client kubernetes.Interface, secretName, namespace, key string, logger *zap.Logger) ([]byte, error) {
+	if logger != nil {
+		logger.Info("Fetching secret data",
+			zap.String("secret", fmt.Sprintf("%s/%s", namespace, secretName)),
+			zap.String("key", key),
+		)
 	}
 
 	maxRetries := 30
@@ -77,7 +81,7 @@ func fetchSecretData(ctx context.Context, secretName, namespace, key string, log
 	var lastErr error
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		secret, err := clientset.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
+		secret, err := client.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
 		if err != nil {
 			if apierrors.IsNotFound(err) {
 				if attempt < maxRetries-1 {
@@ -89,7 +93,11 @@ func fetchSecretData(ctx context.Context, secretName, namespace, key string, log
 							zap.Duration("retry_delay", retryDelay),
 						)
 					}
-					time.Sleep(retryDelay)
+					select {
+					case <-ctx.Done():
+						return nil, fmt.Errorf("context cancelled while waiting to retry secret %s/%s: %w", namespace, secretName, ctx.Err())
+					case <-time.After(retryDelay):
+					}
 					retryDelay = time.Duration(float64(retryDelay) * 1.5)
 					if retryDelay > 10*time.Second {
 						retryDelay = 10 * time.Second

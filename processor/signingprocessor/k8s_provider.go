@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	"go.uber.org/zap"
+	"k8s.io/client-go/kubernetes"
 )
 
 type k8sKeyMaterialProvider struct {
@@ -17,12 +18,20 @@ type k8sKeyMaterialProvider struct {
 }
 
 func newK8sKeyMaterialProvider(ctx context.Context, cfg *K8sSecretConfig, logger *zap.Logger) (KeyMaterialProvider, error) {
-	certPEM, err := fetchSecretData(ctx, cfg.Name, cfg.Namespace, cfg.CertKey, logger)
+	client, err := getK8sClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create k8s client: %w", err)
+	}
+	return newK8sKeyMaterialProviderWithClient(ctx, client, cfg, logger)
+}
+
+func newK8sKeyMaterialProviderWithClient(ctx context.Context, client kubernetes.Interface, cfg *K8sSecretConfig, logger *zap.Logger) (KeyMaterialProvider, error) {
+	certPEM, err := fetchSecretDataWithClient(ctx, client, cfg.Name, cfg.Namespace, cfg.CertKey, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch certificate from k8s secret: %w", err)
 	}
 
-	keyPEM, err := fetchSecretData(ctx, cfg.Name, cfg.Namespace, cfg.KeyKey, logger)
+	keyPEM, err := fetchSecretDataWithClient(ctx, client, cfg.Name, cfg.Namespace, cfg.KeyKey, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch private key from k8s secret: %w", err)
 	}
