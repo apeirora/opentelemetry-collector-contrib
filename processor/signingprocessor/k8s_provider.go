@@ -5,7 +5,7 @@ package signingprocessor // import "github.com/open-telemetry/opentelemetry-coll
 
 import (
 	"context"
-	"crypto/rsa"
+	"crypto"
 	"crypto/x509"
 	"fmt"
 
@@ -49,7 +49,7 @@ func newK8sKeyMaterialProviderWithClient(ctx context.Context, client kubernetes.
 	return &k8sKeyMaterialProvider{reader: reader}, nil
 }
 
-func (p *k8sKeyMaterialProvider) GetPrivateKey() *rsa.PrivateKey {
+func (p *k8sKeyMaterialProvider) GetPrivateKey() crypto.Signer {
 	return p.reader.GetPrivateKey()
 }
 

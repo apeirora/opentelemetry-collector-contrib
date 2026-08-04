@@ -6,6 +6,8 @@ package signingprocessor // import "github.com/open-telemetry/opentelemetry-coll
 import (
 	"context"
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -50,7 +52,7 @@ func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settin
 	case crypto.SHA512:
 		hashFunc = func() hash.Hash { return crypto.SHA512.New() }
 	default:
-		return nil, fmt.Errorf("unsupported hash algorithm")
+		// EdDSA (crypto.Hash(0)): no pre-hashing; hashFunc left nil
 	}
 
 	certRef, err := buildCertificateRef(provider, cfg.CertificateRef)
@@ -100,32 +102,67 @@ func (p *signingProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error 
 	return p.nextLogs.ConsumeLogs(ctx, ld)
 }
 
-// processLogRecord computes a hash over the full log record (excluding
-// audit.integrity.* attributes) and signs it.
+// processLogRecord computes a canonical JSON hash (RFC 8785) of the log record
+// (excluding audit.integrity.* attributes) and signs it with the configured algorithm.
 // It adds one attribute:
-//   - audit.integrity.value: base64-encoded RSA PKCS1v15 signature of the canonical hash
+//   - audit.integrity.value: base64-encoded signature
 func (p *signingProcessor) processLogRecord(lr plog.LogRecord) error {
 	logData, err := p.serializeLogRecord(lr)
 	if err != nil {
 		return fmt.Errorf("failed to serialize log record: %w", err)
 	}
 
-	h := p.hashFunc()
-	if _, err := h.Write(logData); err != nil {
-		return fmt.Errorf("failed to compute hash: %w", err)
-	}
-	hashBytes := h.Sum(nil)
-
-	privateKey := p.provider.GetPrivateKey()
-	signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, p.config.GetHash(), hashBytes)
+	signature, err := p.sign(logData)
 	if err != nil {
-		return fmt.Errorf("failed to sign hash: %w", err)
+		return fmt.Errorf("failed to sign log record: %w", err)
 	}
-	signatureBase64 := base64.StdEncoding.EncodeToString(signature)
 
-	lr.Attributes().PutStr("audit.integrity.value", signatureBase64)
-
+	lr.Attributes().PutStr("audit.integrity.value", base64.StdEncoding.EncodeToString(signature))
 	return nil
+}
+
+// sign produces a signature over payload using the configured JWA algorithm.
+// For RS256/RS512/ES256 it hashes payload first; for EdDSA it passes the raw
+// message because ed25519 hashes internally (SHA-512).
+func (p *signingProcessor) sign(payload []byte) ([]byte, error) {
+	privateKey := p.provider.GetPrivateKey()
+
+	switch p.config.Algorithm {
+	case AlgorithmRS256, AlgorithmRS512:
+		h := p.hashFunc()
+		if _, err := h.Write(payload); err != nil {
+			return nil, fmt.Errorf("failed to compute hash: %w", err)
+		}
+		hashBytes := h.Sum(nil)
+		rsaKey, ok := privateKey.(*rsa.PrivateKey)
+		if !ok {
+			return nil, fmt.Errorf("algorithm %s requires an RSA private key", p.config.Algorithm)
+		}
+		return rsa.SignPKCS1v15(rand.Reader, rsaKey, p.config.GetHash(), hashBytes)
+
+	case AlgorithmES256:
+		h := p.hashFunc()
+		if _, err := h.Write(payload); err != nil {
+			return nil, fmt.Errorf("failed to compute hash: %w", err)
+		}
+		hashBytes := h.Sum(nil)
+		ecKey, ok := privateKey.(*ecdsa.PrivateKey)
+		if !ok {
+			return nil, fmt.Errorf("algorithm ES256 requires an ECDSA private key")
+		}
+		return ecdsa.SignASN1(rand.Reader, ecKey, hashBytes)
+
+	case AlgorithmEdDSA:
+		edKey, ok := privateKey.(ed25519.PrivateKey)
+		if !ok {
+			return nil, fmt.Errorf("algorithm EdDSA requires an Ed25519 private key")
+		}
+		// Ed25519 signs the raw message; no pre-hashing.
+		return ed25519.Sign(edKey, payload), nil
+
+	default:
+		return nil, fmt.Errorf("unsupported algorithm: %s", p.config.Algorithm)
+	}
 }
 
 // serializeLogRecord produces a canonical JSON representation of the full log

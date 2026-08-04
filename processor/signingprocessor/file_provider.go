@@ -4,7 +4,7 @@
 package signingprocessor // import "github.com/open-telemetry/opentelemetry-collector-contrib/processor/signingprocessor"
 
 import (
-	"crypto/rsa"
+	"crypto"
 	"crypto/x509"
 	"fmt"
 	"os"
@@ -38,7 +38,7 @@ func newFileKeyMaterialProvider(cfg *FileKeyConfig) (KeyMaterialProvider, error)
 	return &fileKeyMaterialProvider{reader: reader}, nil
 }
 
-func (p *fileKeyMaterialProvider) GetPrivateKey() *rsa.PrivateKey {
+func (p *fileKeyMaterialProvider) GetPrivateKey() crypto.Signer {
 	return p.reader.GetPrivateKey()
 }
 

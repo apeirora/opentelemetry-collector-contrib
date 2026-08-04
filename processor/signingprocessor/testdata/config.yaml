@@ -1,5 +1,5 @@
 # Signing processor — file-based key material (minimal config).
-# hash_algorithm and certificate_ref use their defaults.
+# algorithm and certificate_ref use their defaults (RS256, fingerprint).
 signing:
   key_source:
     type: file
@@ -7,9 +7,9 @@ signing:
       cert_file: /etc/otelcol/signing-cert.pem
       key_file:  /etc/otelcol/signing-key.pem
 
-# SHA-512 variant with full certificate reference.
+# RS512 variant with full certificate reference.
 signing/sha512_full:
-  hash_algorithm:  SHA512
+  algorithm: RS512
   certificate_ref: full
   key_source:
     type: file

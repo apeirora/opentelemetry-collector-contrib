@@ -24,7 +24,7 @@ func TestLoadConfig(t *testing.T) {
 		{
 			id: component.NewID(component.MustNewType("signing")),
 			expected: &Config{
-				HashAlgorithm:  "SHA256",
+				Algorithm: "RS256",
 				CertificateRef: "fingerprint",
 				KeySource: KeySourceConfig{
 					Type: KeySourceFile,
@@ -38,7 +38,7 @@ func TestLoadConfig(t *testing.T) {
 		{
 			id: component.NewIDWithName(component.MustNewType("signing"), "sha512_full"),
 			expected: &Config{
-				HashAlgorithm:  "SHA512",
+				Algorithm: "RS512",
 				CertificateRef: "full",
 				KeySource: KeySourceConfig{
 					Type: KeySourceFile,
@@ -52,7 +52,7 @@ func TestLoadConfig(t *testing.T) {
 		{
 			id: component.NewIDWithName(component.MustNewType("signing"), "env"),
 			expected: &Config{
-				HashAlgorithm:  "SHA256",
+				Algorithm: "RS256",
 				CertificateRef: "fingerprint",
 				KeySource: KeySourceConfig{
 					Type: KeySourceEnv,
@@ -66,7 +66,7 @@ func TestLoadConfig(t *testing.T) {
 		{
 			id: component.NewIDWithName(component.MustNewType("signing"), "k8s"),
 			expected: &Config{
-				HashAlgorithm:  "SHA256",
+				Algorithm: "RS256",
 				CertificateRef: "fingerprint",
 				KeySource: KeySourceConfig{
 					Type: KeySourceK8sSecret,
@@ -82,7 +82,7 @@ func TestLoadConfig(t *testing.T) {
 		{
 			id: component.NewIDWithName(component.MustNewType("signing"), "bao"),
 			expected: &Config{
-				HashAlgorithm:  "SHA256",
+				Algorithm: "RS256",
 				CertificateRef: "fingerprint",
 				KeySource: KeySourceConfig{
 					Type: KeySourceBao,

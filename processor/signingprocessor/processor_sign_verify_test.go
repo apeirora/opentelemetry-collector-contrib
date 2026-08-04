@@ -29,7 +29,7 @@ type staticProvider struct {
 	cert *x509.Certificate
 }
 
-func (s *staticProvider) GetPrivateKey() *rsa.PrivateKey { return s.key }
+func (s *staticProvider) GetPrivateKey() crypto.Signer { return s.key }
 func (s *staticProvider) GetCertificate() *x509.Certificate { return s.cert }
 
 func newTestProvider(t *testing.T) *staticProvider {
@@ -58,7 +58,7 @@ func newTestProvider(t *testing.T) *staticProvider {
 func newTestProcessor(t *testing.T, provider KeyMaterialProvider) *signingProcessor {
 	t.Helper()
 	return &signingProcessor{
-		config:       &Config{HashAlgorithm: "SHA256", CertificateRef: CertificateRefFingerprint},
+		config:       &Config{Algorithm: "RS256", CertificateRef: CertificateRefFingerprint},
 		provider:     provider,
 		hashFunc:     func() hash.Hash { return crypto.SHA256.New() },
 		jwaAlgorithm: "RS256",
@@ -137,7 +137,7 @@ func verifyRecord(t *testing.T, lr plog.LogRecord, pubKey *rsa.PublicKey) {
 func TestSignVerifyBasic(t *testing.T) {
 	prov := newTestProvider(t)
 	p := &signingProcessor{
-		config:       &Config{HashAlgorithm: "SHA256", CertificateRef: CertificateRefFingerprint},
+		config:       &Config{Algorithm: "RS256", CertificateRef: CertificateRefFingerprint},
 		provider:     prov,
 		hashFunc:     func() hash.Hash { return crypto.SHA256.New() },
 		jwaAlgorithm: "RS256",
@@ -166,7 +166,7 @@ func TestSignVerifyBasic(t *testing.T) {
 func TestSignVerifyWithSeverityAndTrace(t *testing.T) {
 	prov := newTestProvider(t)
 	p := &signingProcessor{
-		config:       &Config{HashAlgorithm: "SHA256", CertificateRef: CertificateRefFingerprint},
+		config:       &Config{Algorithm: "RS256", CertificateRef: CertificateRefFingerprint},
 		provider:     prov,
 		hashFunc:     func() hash.Hash { return crypto.SHA256.New() },
 		jwaAlgorithm: "RS256",
@@ -199,7 +199,7 @@ func TestSignVerifyWithSeverityAndTrace(t *testing.T) {
 func TestJCSCanonicalization(t *testing.T) {
 	prov := newTestProvider(t)
 	p := &signingProcessor{
-		config:   &Config{HashAlgorithm: "SHA256"},
+		config:   &Config{Algorithm: "RS256"},
 		provider: prov,
 		hashFunc: func() hash.Hash { return crypto.SHA256.New() },
 	}
@@ -235,7 +235,7 @@ func TestJCSCanonicalization(t *testing.T) {
 func TestIntegrityAttrsExcludedFromPayload(t *testing.T) {
 	prov := newTestProvider(t)
 	p := &signingProcessor{
-		config:   &Config{HashAlgorithm: "SHA256"},
+		config:   &Config{Algorithm: "RS256"},
 		provider: prov,
 		hashFunc: func() hash.Hash { return crypto.SHA256.New() },
 	}
@@ -259,7 +259,7 @@ func TestIntegrityAttrsExcludedFromPayload(t *testing.T) {
 func TestSignVerifyEventName(t *testing.T) {
 	prov := newTestProvider(t)
 	p := &signingProcessor{
-		config:       &Config{HashAlgorithm: "SHA256", CertificateRef: CertificateRefFingerprint},
+		config:       &Config{Algorithm: "RS256", CertificateRef: CertificateRefFingerprint},
 		provider:     prov,
 		hashFunc:     func() hash.Hash { return crypto.SHA256.New() },
 		jwaAlgorithm: "RS256",

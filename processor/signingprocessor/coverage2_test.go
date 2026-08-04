@@ -9,7 +9,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -32,7 +31,7 @@ func TestNewKeyMaterialProviderEnv(t *testing.T) {
 	t.Setenv("NKM_KEY", string(keyPEM))
 
 	cfg := &Config{
-		HashAlgorithm: "SHA256",
+		Algorithm: "RS256",
 		KeySource: KeySourceConfig{
 			Type: KeySourceEnv,
 			Env:  &EnvKeyConfig{CertEnvVar: "NKM_CERT", KeyEnvVar: "NKM_KEY"},
@@ -51,7 +50,7 @@ func TestNewKeyMaterialProviderK8sError(t *testing.T) {
 	// k8s provider will fail outside a cluster — we just verify the dispatch
 	// reaches the k8s branch and surfaces an error (not a panic or wrong branch).
 	cfg := &Config{
-		HashAlgorithm: "SHA256",
+		Algorithm: "RS256",
 		KeySource: KeySourceConfig{
 			Type: KeySourceK8sSecret,
 			K8sSecret: &K8sSecretConfig{
@@ -68,7 +67,7 @@ func TestNewKeyMaterialProviderK8sError(t *testing.T) {
 
 func TestNewKeyMaterialProviderBaoError(t *testing.T) {
 	cfg := &Config{
-		HashAlgorithm: "SHA256",
+		Algorithm: "RS256",
 		KeySource: KeySourceConfig{
 			Type: KeySourceBao,
 			Bao: &BaoKeyConfig{
@@ -87,7 +86,7 @@ func TestNewKeyMaterialProviderBaoError(t *testing.T) {
 
 func TestNewKeyMaterialProviderUnknownType(t *testing.T) {
 	cfg := &Config{
-		HashAlgorithm: "SHA256",
+		Algorithm: "RS256",
 		KeySource:     KeySourceConfig{Type: "unknown"},
 	}
 	_, err := newKeyMaterialProvider(context.Background(), cfg, zap.NewNop())
@@ -138,7 +137,7 @@ func TestParseCertificateDataPKCS8NonRSA(t *testing.T) {
 
 type faultyProvider struct{}
 
-func (f *faultyProvider) GetPrivateKey() *rsa.PrivateKey    { return nil }
+func (f *faultyProvider) GetPrivateKey() crypto.Signer    { return nil }
 func (f *faultyProvider) GetCertificate() *x509.Certificate { return nil }
 
 var _ KeyMaterialProvider = (*faultyProvider)(nil)
@@ -163,7 +162,7 @@ func TestConsumeLogsSignError(t *testing.T) {
 	prov, _ := newFileKeyMaterialProvider(&FileKeyConfig{CertFile: certFile, KeyFile: keyFile})
 
 	p := &signingProcessor{
-		config:       &Config{HashAlgorithm: "SHA256"},
+		config:       &Config{Algorithm: "RS256"},
 		provider:     prov,
 		nextLogs:     &logSink{},
 		hashFunc:     func() hash.Hash { return &alwaysErrHash{} },
@@ -200,7 +199,7 @@ func TestBuildCertificateRefNilCert(t *testing.T) {
 
 func TestNewProcessorMissingKeyFiles(t *testing.T) {
 	cfg := &Config{
-		HashAlgorithm:  "SHA256",
+		Algorithm: "RS256",
 		CertificateRef: CertificateRefFingerprint,
 		KeySource:      KeySourceConfig{Type: KeySourceFile, File: &FileKeyConfig{CertFile: "/no/such/cert.pem", KeyFile: "/no/such/key.pem"}},
 	}

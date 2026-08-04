@@ -2,11 +2,11 @@
 
 # Missing key_source block.
 signing/missing_key_source:
-  hash_algorithm: SHA256
+  algorithm: RS256
 
-# Invalid hash algorithm.
+# Invalid algorithm.
 signing/bad_hash:
-  hash_algorithm: MD5
+  algorithm: MD5
   key_source:
     type: file
     file:

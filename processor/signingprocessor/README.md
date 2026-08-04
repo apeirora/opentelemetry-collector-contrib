@@ -26,9 +26,9 @@ For invalid configuration examples used in tests see
 ```yaml
 processors:
   signing:
-    # Hash algorithm used for the digest. Default: SHA256.
-    # Valid values: SHA256, SHA512
-    hash_algorithm: SHA256
+    # JWA signing algorithm. Default: RS256.
+    # Valid values: RS256, RS512, ES256, EdDSA
+    algorithm: RS256
 
     # How to encode the signing certificate in the audit.integrity.certificate
     # resource attribute. Default: fingerprint.

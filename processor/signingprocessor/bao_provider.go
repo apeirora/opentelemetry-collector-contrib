@@ -5,7 +5,7 @@ package signingprocessor // import "github.com/open-telemetry/opentelemetry-coll
 
 import (
 	"context"
-	"crypto/rsa"
+	"crypto"
 	"crypto/x509"
 	"fmt"
 
@@ -82,7 +82,7 @@ func newBaoKeyMaterialProviderWithAddress(ctx context.Context, cfg *BaoKeyConfig
 	return &baoKeyMaterialProvider{reader: reader}, nil
 }
 
-func (p *baoKeyMaterialProvider) GetPrivateKey() *rsa.PrivateKey {
+func (p *baoKeyMaterialProvider) GetPrivateKey() crypto.Signer {
 	return p.reader.GetPrivateKey()
 }
 

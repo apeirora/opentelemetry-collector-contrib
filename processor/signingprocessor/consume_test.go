@@ -27,7 +27,7 @@ func TestConsumeLogsResourceAttrs(t *testing.T) {
 	prov := newTestProvider(t)
 	sink := &logSink{}
 	p := &signingProcessor{
-		config:       &Config{HashAlgorithm: "SHA256", CertificateRef: CertificateRefFingerprint},
+		config:       &Config{Algorithm: "RS256", CertificateRef: CertificateRefFingerprint},
 		provider:     prov,
 		nextLogs:     sink,
 		hashFunc:     func() hash.Hash { return crypto.SHA256.New() },

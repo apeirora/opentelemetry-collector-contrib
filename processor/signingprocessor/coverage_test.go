@@ -66,102 +66,102 @@ func TestConfigValidate(t *testing.T) {
 	}{
 		{
 			name:    "valid file defaults",
-			cfg:     Config{HashAlgorithm: "SHA256", CertificateRef: "fingerprint", KeySource: KeySourceConfig{Type: "file", File: validFile}},
+			cfg:     Config{Algorithm: "RS256", CertificateRef: "fingerprint", KeySource: KeySourceConfig{Type: "file", File: validFile}},
 			wantErr: false,
 		},
 		{
 			name:    "valid SHA512 full",
-			cfg:     Config{HashAlgorithm: "SHA512", CertificateRef: "full", KeySource: KeySourceConfig{Type: "file", File: validFile}},
+			cfg:     Config{Algorithm: "RS512", CertificateRef: "full", KeySource: KeySourceConfig{Type: "file", File: validFile}},
 			wantErr: false,
 		},
 		{
 			name:    "bad hash algorithm",
-			cfg:     Config{HashAlgorithm: "MD5", KeySource: KeySourceConfig{Type: "file", File: validFile}},
+			cfg:     Config{Algorithm: "MD5", KeySource: KeySourceConfig{Type: "file", File: validFile}},
 			wantErr: true,
 		},
 		{
 			name:    "bad certificate_ref",
-			cfg:     Config{HashAlgorithm: "SHA256", CertificateRef: "base64", KeySource: KeySourceConfig{Type: "file", File: validFile}},
+			cfg:     Config{Algorithm: "RS256", CertificateRef: "base64", KeySource: KeySourceConfig{Type: "file", File: validFile}},
 			wantErr: true,
 		},
 		{
 			name:    "invalid key_source type",
-			cfg:     Config{HashAlgorithm: "SHA256", KeySource: KeySourceConfig{Type: "vault"}},
+			cfg:     Config{Algorithm: "RS256", KeySource: KeySourceConfig{Type: "vault"}},
 			wantErr: true,
 		},
 		{
 			name:    "k8s_secret missing config block",
-			cfg:     Config{HashAlgorithm: "SHA256", KeySource: KeySourceConfig{Type: "k8s_secret"}},
+			cfg:     Config{Algorithm: "RS256", KeySource: KeySourceConfig{Type: "k8s_secret"}},
 			wantErr: true,
 		},
 		{
 			name:    "k8s_secret missing name",
-			cfg:     Config{HashAlgorithm: "SHA256", KeySource: KeySourceConfig{Type: "k8s_secret", K8sSecret: &K8sSecretConfig{CertKey: "c", KeyKey: "k"}}},
+			cfg:     Config{Algorithm: "RS256", KeySource: KeySourceConfig{Type: "k8s_secret", K8sSecret: &K8sSecretConfig{CertKey: "c", KeyKey: "k"}}},
 			wantErr: true,
 		},
 		{
 			name:    "k8s_secret missing cert_key",
-			cfg:     Config{HashAlgorithm: "SHA256", KeySource: KeySourceConfig{Type: "k8s_secret", K8sSecret: &K8sSecretConfig{Name: "s", KeyKey: "k"}}},
+			cfg:     Config{Algorithm: "RS256", KeySource: KeySourceConfig{Type: "k8s_secret", K8sSecret: &K8sSecretConfig{Name: "s", KeyKey: "k"}}},
 			wantErr: true,
 		},
 		{
 			name:    "k8s_secret missing key_key",
-			cfg:     Config{HashAlgorithm: "SHA256", KeySource: KeySourceConfig{Type: "k8s_secret", K8sSecret: &K8sSecretConfig{Name: "s", CertKey: "c"}}},
+			cfg:     Config{Algorithm: "RS256", KeySource: KeySourceConfig{Type: "k8s_secret", K8sSecret: &K8sSecretConfig{Name: "s", CertKey: "c"}}},
 			wantErr: true,
 		},
 		{
 			name: "k8s_secret valid with namespace",
-			cfg:  Config{HashAlgorithm: "SHA256", KeySource: KeySourceConfig{Type: "k8s_secret", K8sSecret: &K8sSecretConfig{Name: "s", Namespace: "ns", CertKey: "c", KeyKey: "k"}}},
+			cfg:  Config{Algorithm: "RS256", KeySource: KeySourceConfig{Type: "k8s_secret", K8sSecret: &K8sSecretConfig{Name: "s", Namespace: "ns", CertKey: "c", KeyKey: "k"}}},
 			wantErr: false,
 		},
 		{
 			name:    "env missing config block",
-			cfg:     Config{HashAlgorithm: "SHA256", KeySource: KeySourceConfig{Type: "env"}},
+			cfg:     Config{Algorithm: "RS256", KeySource: KeySourceConfig{Type: "env"}},
 			wantErr: true,
 		},
 		{
 			name:    "env missing cert_env_var",
-			cfg:     Config{HashAlgorithm: "SHA256", KeySource: KeySourceConfig{Type: "env", Env: &EnvKeyConfig{KeyEnvVar: "K"}}},
+			cfg:     Config{Algorithm: "RS256", KeySource: KeySourceConfig{Type: "env", Env: &EnvKeyConfig{KeyEnvVar: "K"}}},
 			wantErr: true,
 		},
 		{
 			name:    "env missing key_env_var",
-			cfg:     Config{HashAlgorithm: "SHA256", KeySource: KeySourceConfig{Type: "env", Env: &EnvKeyConfig{CertEnvVar: "C"}}},
+			cfg:     Config{Algorithm: "RS256", KeySource: KeySourceConfig{Type: "env", Env: &EnvKeyConfig{CertEnvVar: "C"}}},
 			wantErr: true,
 		},
 		{
 			name:    "file missing config block",
-			cfg:     Config{HashAlgorithm: "SHA256", KeySource: KeySourceConfig{Type: "file"}},
+			cfg:     Config{Algorithm: "RS256", KeySource: KeySourceConfig{Type: "file"}},
 			wantErr: true,
 		},
 		{
 			name:    "file missing cert_file",
-			cfg:     Config{HashAlgorithm: "SHA256", KeySource: KeySourceConfig{Type: "file", File: &FileKeyConfig{KeyFile: "k.pem"}}},
+			cfg:     Config{Algorithm: "RS256", KeySource: KeySourceConfig{Type: "file", File: &FileKeyConfig{KeyFile: "k.pem"}}},
 			wantErr: true,
 		},
 		{
 			name:    "file missing key_file",
-			cfg:     Config{HashAlgorithm: "SHA256", KeySource: KeySourceConfig{Type: "file", File: &FileKeyConfig{CertFile: "c.pem"}}},
+			cfg:     Config{Algorithm: "RS256", KeySource: KeySourceConfig{Type: "file", File: &FileKeyConfig{CertFile: "c.pem"}}},
 			wantErr: true,
 		},
 		{
 			name:    "bao missing config block",
-			cfg:     Config{HashAlgorithm: "SHA256", KeySource: KeySourceConfig{Type: "bao"}},
+			cfg:     Config{Algorithm: "RS256", KeySource: KeySourceConfig{Type: "bao"}},
 			wantErr: true,
 		},
 		{
 			name:    "bao missing secret_path",
-			cfg:     Config{HashAlgorithm: "SHA256", KeySource: KeySourceConfig{Type: "bao", Bao: &BaoKeyConfig{CertField: "c", KeyField: "k"}}},
+			cfg:     Config{Algorithm: "RS256", KeySource: KeySourceConfig{Type: "bao", Bao: &BaoKeyConfig{CertField: "c", KeyField: "k"}}},
 			wantErr: true,
 		},
 		{
 			name:    "bao missing cert_field",
-			cfg:     Config{HashAlgorithm: "SHA256", KeySource: KeySourceConfig{Type: "bao", Bao: &BaoKeyConfig{SecretPath: "s", KeyField: "k"}}},
+			cfg:     Config{Algorithm: "RS256", KeySource: KeySourceConfig{Type: "bao", Bao: &BaoKeyConfig{SecretPath: "s", KeyField: "k"}}},
 			wantErr: true,
 		},
 		{
 			name:    "bao missing key_field",
-			cfg:     Config{HashAlgorithm: "SHA256", KeySource: KeySourceConfig{Type: "bao", Bao: &BaoKeyConfig{SecretPath: "s", CertField: "c"}}},
+			cfg:     Config{Algorithm: "RS256", KeySource: KeySourceConfig{Type: "bao", Bao: &BaoKeyConfig{SecretPath: "s", CertField: "c"}}},
 			wantErr: true,
 		},
 	}
@@ -173,24 +173,6 @@ func TestConfigValidate(t *testing.T) {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
-	}
-}
-
-func TestConfigGetHash(t *testing.T) {
-	if (&Config{HashAlgorithm: "SHA256"}).GetHash() != crypto.SHA256 {
-		t.Error("expected SHA256")
-	}
-	if (&Config{HashAlgorithm: "SHA512"}).GetHash() != crypto.SHA512 {
-		t.Error("expected SHA512")
-	}
-}
-
-func TestConfigGetJWAAlgorithm(t *testing.T) {
-	if (&Config{HashAlgorithm: "SHA256"}).GetJWAAlgorithm() != "RS256" {
-		t.Error("expected RS256")
-	}
-	if (&Config{HashAlgorithm: "SHA512"}).GetJWAAlgorithm() != "RS512" {
-		t.Error("expected RS512")
 	}
 }
 
@@ -208,8 +190,8 @@ func TestNewFactory(t *testing.T) {
 		t.Fatal("CreateDefaultConfig returned nil")
 	}
 	c := cfg.(*Config)
-	if c.HashAlgorithm != "SHA256" {
-		t.Errorf("default hash algorithm: got %q, want SHA256", c.HashAlgorithm)
+	if c.Algorithm != "RS256" {
+		t.Errorf("default algorithm: got %q, want RS256", c.Algorithm)
 	}
 	if c.CertificateRef != "fingerprint" {
 		t.Errorf("default cert ref: got %q, want fingerprint", c.CertificateRef)
@@ -223,7 +205,7 @@ func TestCreateLogsProcessorFileProvider(t *testing.T) {
 	keyFile := writeTempFile(t, keyPEM)
 
 	cfg := &Config{
-		HashAlgorithm:  "SHA256",
+		Algorithm: "RS256",
 		CertificateRef: CertificateRefFingerprint,
 		KeySource: KeySourceConfig{
 			Type: KeySourceFile,
@@ -478,7 +460,7 @@ func TestProcessorStartShutdown(t *testing.T) {
 	prov, _ := newFileKeyMaterialProvider(&FileKeyConfig{CertFile: certFile, KeyFile: keyFile})
 
 	p := &signingProcessor{
-		config:       &Config{HashAlgorithm: "SHA256", CertificateRef: CertificateRefFingerprint},
+		config:       &Config{Algorithm: "RS256", CertificateRef: CertificateRefFingerprint},
 		provider:     prov,
 		nextLogs:     &logSink{},
 		hashFunc:     func() hash.Hash { return crypto.SHA256.New() },
@@ -504,7 +486,7 @@ func TestValueToInterface(t *testing.T) {
 	prov, _ := newFileKeyMaterialProvider(&FileKeyConfig{CertFile: certFile, KeyFile: keyFile})
 
 	p := &signingProcessor{
-		config:   &Config{HashAlgorithm: "SHA256"},
+		config:   &Config{Algorithm: "RS256"},
 		provider: prov,
 		hashFunc: func() hash.Hash { return crypto.SHA256.New() },
 	}
@@ -550,7 +532,7 @@ func TestNewProcessorUnsupportedHash(t *testing.T) {
 	keyFile := writeTempFile(t, keyPEM)
 
 	cfg := &Config{
-		HashAlgorithm:  "SHA256",
+		Algorithm: "RS256",
 		CertificateRef: CertificateRefFingerprint,
 		KeySource:      KeySourceConfig{Type: KeySourceFile, File: &FileKeyConfig{CertFile: certFile, KeyFile: keyFile}},
 	}
@@ -563,7 +545,7 @@ func TestNewProcessorUnsupportedHash(t *testing.T) {
 	// We do this by building a processor struct manually and verifying the switch falls through.
 	// The newProcessor function uses cfg.GetHash(); since GetHash() defaults to SHA256 for unknown
 	// strings we instead test via Validate() that "MD5" is caught before newProcessor is reached.
-	if err := (&Config{HashAlgorithm: "MD5", KeySource: KeySourceConfig{Type: KeySourceFile, File: &FileKeyConfig{CertFile: "c", KeyFile: "k"}}}).Validate(); err == nil {
+	if err := (&Config{Algorithm: "MD5", KeySource: KeySourceConfig{Type: KeySourceFile, File: &FileKeyConfig{CertFile: "c", KeyFile: "k"}}}).Validate(); err == nil {
 		t.Error("Validate() should reject MD5")
 	}
 	_ = cfg
@@ -584,7 +566,7 @@ func TestSerializeLogRecordNonStringBody(t *testing.T) {
 	prov, _ := newFileKeyMaterialProvider(&FileKeyConfig{CertFile: certFile, KeyFile: keyFile})
 
 	p := &signingProcessor{
-		config:   &Config{HashAlgorithm: "SHA256"},
+		config:   &Config{Algorithm: "RS256"},
 		provider: prov,
 		hashFunc: func() hash.Hash { return crypto.SHA256.New() },
 	}

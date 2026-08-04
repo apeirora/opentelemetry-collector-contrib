@@ -11,8 +11,14 @@ import (
 )
 
 const (
-	defaultHashAlgorithm  = "SHA256"
+	defaultAlgorithm      = "RS256"
 	defaultCertificateRef = "fingerprint"
+
+	// Algorithm constants — JWA identifiers (RFC 7518 / RFC 8037).
+	AlgorithmRS256 = "RS256"
+	AlgorithmRS512 = "RS512"
+	AlgorithmES256 = "ES256"
+	AlgorithmEdDSA = "EdDSA"
 
 	KeySourceK8sSecret = "k8s_secret"
 	KeySourceEnv       = "env"
@@ -23,16 +29,17 @@ const (
 	CertificateRefFull        = "full"
 )
 
-
 var (
-	errInvalidHashAlgorithm   = errors.New("hash_algorithm must be SHA256 or SHA512")
+	errInvalidAlgorithm       = errors.New("algorithm must be RS256, RS512, ES256, or EdDSA")
 	errInvalidKeySourceType   = errors.New("key_source.type must be k8s_secret, env, file, or bao")
 	errMissingKeySourceConfig = errors.New("key_source config block is missing for the specified type")
 	errInvalidCertificateRef  = errors.New("certificate_ref must be fingerprint or full")
 )
 
 type Config struct {
-	HashAlgorithm  string          `mapstructure:"hash_algorithm"`
+	// Algorithm is the JWA signing algorithm. Valid values: RS256, RS512, ES256, EdDSA.
+	// Default: RS256.
+	Algorithm      string          `mapstructure:"algorithm"`
 	CertificateRef string          `mapstructure:"certificate_ref"`
 	KeySource      KeySourceConfig `mapstructure:"key_source"`
 }
@@ -76,14 +83,19 @@ type BaoKeyConfig struct {
 
 func createDefaultConfig() component.Config {
 	return &Config{
-		HashAlgorithm:  defaultHashAlgorithm,
+		Algorithm:      defaultAlgorithm,
 		CertificateRef: defaultCertificateRef,
 	}
 }
 
 func (c *Config) Validate() error {
-	if c.HashAlgorithm != "SHA256" && c.HashAlgorithm != "SHA512" {
-		return errInvalidHashAlgorithm
+	switch c.Algorithm {
+	case AlgorithmRS256, AlgorithmRS512, AlgorithmES256, AlgorithmEdDSA:
+		// valid
+	case "":
+		c.Algorithm = defaultAlgorithm
+	default:
+		return errInvalidAlgorithm
 	}
 
 	if c.CertificateRef == "" {
@@ -149,20 +161,22 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+// GetHash returns the crypto.Hash for pre-hashing algorithms (RS256, RS512, ES256).
+// Returns crypto.Hash(0) for EdDSA, which hashes internally.
 func (c *Config) GetHash() crypto.Hash {
-	if c.HashAlgorithm == "SHA512" {
+	switch c.Algorithm {
+	case AlgorithmRS512:
 		return crypto.SHA512
+	case AlgorithmEdDSA:
+		return crypto.Hash(0)
+	default: // RS256, ES256
+		return crypto.SHA256
 	}
-	return crypto.SHA256
 }
 
-// GetJWAAlgorithm returns the JWA algorithm identifier (RFC 7518) for the
-// configured hash algorithm combined with RSA PKCS1v15 signing.
+// GetJWAAlgorithm returns the JWA algorithm identifier — identical to Algorithm.
 func (c *Config) GetJWAAlgorithm() string {
-	if c.HashAlgorithm == "SHA512" {
-		return "RS512"
-	}
-	return "RS256"
+	return c.Algorithm
 }
 
 var _ component.Config = (*Config)(nil)
