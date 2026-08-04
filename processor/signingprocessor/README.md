@@ -6,7 +6,7 @@
 The signing processor adds cryptographic integrity attributes to log records.
 For each log record it computes a canonical JSON hash (RFC 8785 / JCS) over
 the full record and signs it with an RSA private key.  The resulting hash and
-signature are stored as `audit.integrity.hash` and `audit.integrity.value`
+signature is stored as `audit.integrity.value`
 attributes on the record, and the JWA algorithm identifier plus a certificate
 reference are stored as `audit.integrity.algorithm` and
 `audit.integrity.certificate` on the enclosing Resource.
@@ -83,8 +83,7 @@ processors:
 
 | Attribute | Type | Description |
 |---|---|---|
-| `audit.integrity.hash` | string | Base64-encoded SHA-256 (or SHA-512) digest of the JCS-canonical record. |
-| `audit.integrity.value` | string | Base64-encoded RSA PKCS#1 v1.5 signature of the hash. |
+| `audit.integrity.value` | string | Base64-encoded RSA PKCS#1 v1.5 signature of the JCS-canonical hash. |
 
 ### Per Resource (set once per ResourceLogs block)
 
@@ -97,7 +96,7 @@ processors:
 
 The processor serialises the following log-record fields into a JSON object,
 canonicalises it with RFC 8785 (JCS), and hashes the result.  All
-`audit.integrity.*` attributes are excluded so the hash can be verified before
+`audit.integrity.*` attributes are excluded so the signature can be verified before
 those attributes are removed.
 
 ```
