@@ -6,11 +6,9 @@ This script verifies the integrity and authenticity of log records that have bee
 
 The verification script:
 
-1. Extracts the `audit.integrity.hash` and `audit.integrity.value` attributes from log records
-2. Reconstructs the original log record (without hash/signature attributes)
-3. Serializes it the same way the processor does
-4. Computes the hash and compares it with the provided hash
-5. Verifies the RSA signature using the public key from the certificate
+1. Reconstructs the original log record (without signature attribute)
+2. Serializes it the same way the processor does
+3. Computes the hash and verifies the RSA signature against it
 
 ## Prerequisites
 
@@ -95,7 +93,6 @@ The script accepts log files in two formats:
             {
               "body": "Test log message",
               "attributes": {
-                "audit.integrity.hash": "base64-encoded-hash",
                 "audit.integrity.value": "base64-encoded-signature",
                 "other.attribute": "value"
               },
@@ -117,7 +114,6 @@ The script accepts log files in two formats:
 {
   "body": "Test log message",
   "attributes": {
-    "audit.integrity.hash": "base64-encoded-hash",
     "audit.integrity.value": "base64-encoded-signature",
     "other.attribute": "value"
   },
@@ -138,27 +134,21 @@ The script will output:
 Example output:
 
 ```
-✅ Log record 1: Hash and signature verified successfully
-✅ Log record 2: Hash and signature verified successfully
+✅ Log record 1: Signature verified successfully
+✅ Log record 2: Signature verified successfully
 
 ✅ All log records verified successfully!
 ```
 
 ## How It Works
 
-1. **Hash Verification**: The script reconstructs the log record exactly as it was when hashed by the processor (excluding `audit.integrity.*` attributes), serializes it to JSON, and computes the hash using the same algorithm (`SHA256` or `SHA512`, configured via `--hash`). It then compares this computed hash with the `audit.integrity.hash` attribute.
+1. **Signature Verification**: The script reconstructs the log record exactly as it was when signed by the processor (excluding `audit.integrity.*` attributes), serializes it to canonical JSON (RFC 8785 JCS), computes the hash, then verifies the RSA PKCS1v15 signature from `audit.integrity.value` against that hash using the public key from the certificate.
 
-2. **Signature Verification**: The script decodes the base64-encoded signature from `audit.integrity.value`, then uses RSA PKCS1v15 verification with the public key from the certificate to verify that the signature was created by the holder of the corresponding private key. The signing algorithm is indicated by the `audit.integrity.algorithm` resource attribute (`RS256` for SHA-256, `RS512` for SHA-512).
+2. **Algorithm**: The signing algorithm is indicated by the `audit.integrity.algorithm` resource attribute (`RS256` for SHA-256, `RS512` for SHA-512).
 
 3. **Certificate Reference**: The `audit.integrity.certificate` resource attribute identifies the signing certificate. By default the processor writes a `sha256:<hex>` fingerprint; if configured with `certificate_ref: full` it writes the full Base64-encoded DER certificate instead.
 
 ## Troubleshooting
-
-### Hash Mismatch
-
-- Ensure the `--hash` flag matches `hash_algorithm` in the processor config (`SHA256` maps to JWA `RS256`, `SHA512` to `RS512`)
-- Check that the log record hasn't been modified after signing
-- Verify that the serialization format matches (the script uses the same logic as the processor)
 
 ### Signature Verification Failed
 

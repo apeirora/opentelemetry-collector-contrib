@@ -139,7 +139,7 @@ in_record && in_attrs && /->.*:.*Str\(/ {
   attrs[m[1]]=m[2]
 }
 END {
-  if (body == "Test log message from shell" && ("audit.integrity.hash" in attrs) && ("audit.integrity.value" in attrs)) {
+  if (body == "Test log message from shell" && ("audit.integrity.value" in attrs)) {
     printf "{\n"
     printf "  \"body\": \"%s\",\n", body
     printf "  \"timestamp\": \"%s\",\n", timestamp
