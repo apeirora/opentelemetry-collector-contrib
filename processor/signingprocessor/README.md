@@ -18,6 +18,11 @@ there.
 
 ## Configuration
 
+For complete examples of all supported configurations see
+[testdata/config.yaml](./testdata/config.yaml).
+For invalid configuration examples used in tests see
+[testdata/config_invalid.yaml](./testdata/config_invalid.yaml).
+
 ```yaml
 processors:
   signing:
