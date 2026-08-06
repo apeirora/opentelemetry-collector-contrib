@@ -7,7 +7,7 @@ change_type: new_component
 component: processor/signing
 
 # A brief description of the change.  Surround your text with quotes ("") if it needs to start with a backtick (`).
-note: Add `signingprocessor`, a new processor that computes a RFC 8785 (JCS) canonical hash and RSA signature over each log record and stores them as `audit.integrity.hash` and `audit.integrity.value` attributes. Designed for use with the OpenTelemetry Audit Logging signal to provide tamper-evident audit trails.
+note: Add `signingprocessor`, a new processor that computes a RFC 8785 (JCS) canonical hash and signs each log record, storing the base64-encoded signature as `audit.integrity.value` and setting `audit.integrity.algorithm` and `audit.integrity.certificate` as resource attributes. Supports RS256, RS512, ES256, EdDSA, and HMAC-SHA256. Designed for use with the OpenTelemetry Audit Logging signal to provide tamper-evident audit trails.
 
 # Mandatory: One or more tracking issues related to the change. You can use the PR number here if no issue exists.
 issues: []

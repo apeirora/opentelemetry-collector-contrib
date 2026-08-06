@@ -70,7 +70,6 @@ processors:
       #   namespace: default              # optional, defaults to "default"
       #   cert_key:  tls.crt
       #   key_key:   tls.key
-      #   ca_key:    ca.crt              # optional
 
       # --- Kubernetes Secret provider — HMAC-SHA256 ---
       # k8s_secret:

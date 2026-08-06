@@ -65,7 +65,6 @@ type K8sSecretConfig struct {
 	// Asymmetric key fields
 	CertKey string `mapstructure:"cert_key"`
 	KeyKey  string `mapstructure:"key_key"`
-	CAKey   string `mapstructure:"ca_key"`
 	// HMAC-SHA256 field
 	HMACKey string `mapstructure:"hmac_key"`
 }

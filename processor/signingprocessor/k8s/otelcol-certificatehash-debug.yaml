@@ -21,7 +21,6 @@ type: Opaque
 data:
   cert.pem: ""
   key.pem: ""
-  ca.pem: ""
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -167,20 +166,11 @@ spec:
 
               echo "Creating/updating Kubernetes secret: $SECRET_NAME in namespace $NAMESPACE"
 
-              if [ -n "$CA_PEM" ] && [ "$CA_PEM" != "null" ]; then
-                kubectl create secret generic "$SECRET_NAME" \
-                  --namespace="$NAMESPACE" \
-                  --from-literal=cert.pem="$CERT_PEM" \
-                  --from-literal=key.pem="$KEY_PEM" \
-                  --from-literal=ca.pem="$CA_PEM" \
-                  --dry-run=client -o yaml | kubectl apply -f -
-              else
-                kubectl create secret generic "$SECRET_NAME" \
-                  --namespace="$NAMESPACE" \
-                  --from-literal=cert.pem="$CERT_PEM" \
-                  --from-literal=key.pem="$KEY_PEM" \
-                  --dry-run=client -o yaml | kubectl apply -f -
-              fi
+              kubectl create secret generic "$SECRET_NAME" \
+                --namespace="$NAMESPACE" \
+                --from-literal=cert.pem="$CERT_PEM" \
+                --from-literal=key.pem="$KEY_PEM" \
+                --dry-run=client -o yaml | kubectl apply -f -
 
               echo "Secret updated successfully"
           env:
@@ -243,7 +233,6 @@ data:
             namespace: otel-demo
             cert_key: cert.pem
             key_key: key.pem
-            ca_key: ca.pem
       batch:
 
     exporters:
