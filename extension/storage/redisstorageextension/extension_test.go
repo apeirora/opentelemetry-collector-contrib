@@ -4,15 +4,19 @@
 package redisstorageextension
 
 import (
+	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/go-redis/redismock/v9"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/extension/extensiontest"
 	"go.opentelemetry.io/collector/extension/xextension/storage"
+	"go.uber.org/zap"
 )
 
 func TestExtensionIntegrity(t *testing.T) {
@@ -187,6 +191,7 @@ func TestTwoClientsWithDifferentNames(t *testing.T) {
 func TestRedisKey(t *testing.T) {
 	t.Run("batch operations", func(t *testing.T) {
 		mockedClient, mock := redismock.NewClientMock()
+		t.Cleanup(func() { require.NoError(t, mockedClient.Close()) })
 		ctx := t.Context()
 		client := redisClient{
 			client: mockedClient,
@@ -208,6 +213,7 @@ func TestRedisKey(t *testing.T) {
 
 	t.Run("single operations", func(t *testing.T) {
 		mockedClient, mock := redismock.NewClientMock()
+		t.Cleanup(func() { require.NoError(t, mockedClient.Close()) })
 		ctx := t.Context()
 		client := redisClient{
 			client: mockedClient,
@@ -314,4 +320,120 @@ func newTestExtension(t *testing.T) storage.Extension {
 
 func newTestEntity(name string) component.ID {
 	return component.MustNewIDWithName("nop", name)
+}
+
+func TestStartRetriesThenFails(t *testing.T) {
+	defer func(prev func(opt *redis.Options) *redis.Client) { newRedisClient = prev }(newRedisClient)
+
+	failErrs := []error{errors.New("ping1"), errors.New("ping2"), errors.New("ping3")}
+	clients := make([]*redis.Client, len(failErrs))
+	mocks := make([]redismock.ClientMock, len(failErrs))
+	for i := range failErrs {
+		c, m := redismock.NewClientMock()
+		m.ExpectPing().SetErr(failErrs[i])
+		clients[i] = c
+		mocks[i] = m
+	}
+	t.Cleanup(func() {
+		for _, c := range clients {
+			if err := c.Close(); err != nil && !errors.Is(err, redis.ErrClosed) {
+				require.NoError(t, err)
+			}
+		}
+	})
+
+	var idx int
+	newRedisClient = func(opt *redis.Options) *redis.Client {
+		require.Less(t, idx, len(clients))
+		c := clients[idx]
+		idx++
+		return c
+	}
+
+	cfg := &Config{
+		Endpoint:        "localhost:6379",
+		MaxRetries:      len(failErrs),
+		RetryDelay:      time.Millisecond,
+		DialTimeout:     time.Millisecond,
+		ReadTimeout:     time.Millisecond,
+		WriteTimeout:    time.Millisecond,
+		PoolTimeout:     time.Millisecond,
+		MinRetryBackoff: time.Millisecond,
+		MaxRetryBackoff: 2 * time.Millisecond,
+		PingTimeout:     time.Millisecond,
+	}
+
+	rs := &redisStorage{cfg: cfg, logger: zap.NewNop()}
+	err := rs.Start(t.Context(), componenttest.NewNopHost())
+	require.Error(t, err)
+	require.ErrorIs(t, err, failErrs[len(failErrs)-1])
+
+	for _, m := range mocks {
+		require.NoError(t, m.ExpectationsWereMet())
+	}
+}
+
+func TestStartSucceedsAfterRetry(t *testing.T) {
+	defer func(prev func(opt *redis.Options) *redis.Client) { newRedisClient = prev }(newRedisClient)
+
+	firstClient, firstMock := redismock.NewClientMock()
+	firstMock.ExpectPing().SetErr(errors.New("ping fail"))
+
+	secondClient, secondMock := redismock.NewClientMock()
+	secondMock.ExpectPing().SetVal("PONG")
+	t.Cleanup(func() {
+		if err := firstClient.Close(); err != nil && !errors.Is(err, redis.ErrClosed) {
+			require.NoError(t, err)
+		}
+		if err := secondClient.Close(); err != nil && !errors.Is(err, redis.ErrClosed) {
+			require.NoError(t, err)
+		}
+	})
+
+	clients := []*redis.Client{firstClient, secondClient}
+	mocks := []redismock.ClientMock{firstMock, secondMock}
+
+	var idx int
+	newRedisClient = func(opt *redis.Options) *redis.Client {
+		require.Less(t, idx, len(clients))
+		c := clients[idx]
+		idx++
+		return c
+	}
+
+	cfg := &Config{
+		Endpoint:        "localhost:6379",
+		MaxRetries:      2,
+		RetryDelay:      time.Millisecond,
+		DialTimeout:     time.Millisecond,
+		ReadTimeout:     time.Millisecond,
+		WriteTimeout:    time.Millisecond,
+		PoolTimeout:     time.Millisecond,
+		MinRetryBackoff: time.Millisecond,
+		MaxRetryBackoff: 2 * time.Millisecond,
+		PingTimeout:     time.Millisecond,
+	}
+
+	rs := &redisStorage{cfg: cfg, logger: zap.NewNop()}
+	err := rs.Start(t.Context(), componenttest.NewNopHost())
+	require.NoError(t, err)
+	require.Equal(t, secondClient, rs.client)
+	require.NoError(t, rs.Shutdown(t.Context()))
+
+	for _, m := range mocks {
+		require.NoError(t, m.ExpectationsWereMet())
+	}
+}
+
+func TestDefaultConfigHasTimeouts(t *testing.T) {
+	cfg := createDefaultConfig().(*Config)
+	require.Greater(t, cfg.MaxRetries, 0)
+	require.NotZero(t, cfg.RetryDelay)
+	require.NotZero(t, cfg.DialTimeout)
+	require.NotZero(t, cfg.ReadTimeout)
+	require.NotZero(t, cfg.WriteTimeout)
+	require.NotZero(t, cfg.PoolTimeout)
+	require.NotZero(t, cfg.MinRetryBackoff)
+	require.NotZero(t, cfg.MaxRetryBackoff)
+	require.NotZero(t, cfg.PingTimeout)
 }
