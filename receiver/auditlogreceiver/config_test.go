@@ -52,12 +52,13 @@ func TestConfigValidateSyncWithStorage(t *testing.T) {
 	}
 }
 
-func TestConfigValidateAsyncRequiresStorage(t *testing.T) {
+func TestConfigValidateRejectsAsyncMode(t *testing.T) {
 	t.Parallel()
 	cfg := configWithEndpoint("localhost:4310")
-	cfg.ResponseMode = ResponseModeAsync
-	if err := cfg.Validate(); !errors.Is(err, errStorageRequired) {
-		t.Fatalf("expected storage required for async, got %v", err)
+	cfg.StorageID = component.NewIDWithName(component.MustNewType("file_storage"), "")
+	cfg.ResponseMode = "async"
+	if err := cfg.Validate(); !errors.Is(err, errInvalidResponseMode) {
+		t.Fatalf("expected invalid response mode, got %v", err)
 	}
 }
 

@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -36,35 +35,29 @@ import (
 const (
 	// pendingKeysListKey indexes all keys under pendingKeyPrefix in storage.
 	pendingKeysListKey = "__pending_keys__"
-	// pendingKeyPrefix is the storage namespace for async entries awaiting delivery.
+	// pendingKeyPrefix is the storage namespace for pending WAL entries.
 	pendingKeyPrefix = "pending/"
 	// deadLetterKeyPrefix is the storage namespace for permanently failed pending entries.
 	deadLetterKeyPrefix = "dead_letter/"
 
-	defaultTickerTime    = 30 * time.Second
 	rejectedVerifyFailed = "rejected_verify_failed"
 )
 
-// pendingAuditEntry is a durably stored OTLP payload waiting for async delivery.
+// pendingAuditEntry is a durably stored OTLP payload written to WAL.
 type pendingAuditEntry struct {
 	ID          string    `json:"id"`
 	Timestamp   time.Time `json:"timestamp"`
 	Body        []byte    `json:"body"`
 	ContentType string    `json:"content_type"`
-	RetryCount  int       `json:"retry_count"`
-	NextRetryAt time.Time `json:"next_retry_at"`
 }
 
 type auditLogReceiver struct {
-	logger   *zap.Logger
-	consumer consumer.Logs
-	server   *http.Server
-	storage  storage.Client
-	cfg      *Config
-	settings receiver.Settings
-	ctx      context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
+	logger     *zap.Logger
+	consumer   consumer.Logs
+	server     *http.Server
+	storage    storage.Client
+	cfg        *Config
+	settings   receiver.Settings
 	shutdownWG sync.WaitGroup
 
 	circuitBreaker *circuitBreaker
@@ -81,8 +74,6 @@ func NewReceiver(cfg *Config, set receiver.Settings, consumer consumer.Logs) (*A
 		return nil, err
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
 	transport := "http"
 	if cfg.TLS.HasValue() {
 		transport = "https"
@@ -94,7 +85,6 @@ func NewReceiver(cfg *Config, set receiver.Settings, consumer consumer.Logs) (*A
 		ReceiverCreateSettings: set,
 	})
 	if err != nil {
-		cancel()
 		return nil, err
 	}
 
@@ -105,8 +95,6 @@ func NewReceiver(cfg *Config, set receiver.Settings, consumer consumer.Logs) (*A
 		consumer: consumer,
 		cfg:      cfg,
 		settings: set,
-		ctx:      ctx,
-		cancel:   cancel,
 		obsrecv:  obsrecv,
 	}
 
@@ -137,12 +125,7 @@ func (r *auditLogReceiver) Start(ctx context.Context, host component.Host) error
 		return fmt.Errorf("failed to get storage client: %w", err)
 	}
 
-	if r.cfg.IsAsync() {
-		r.wg.Add(1)
-		go r.processPendingLogsLoop()
-	} else {
-		r.recoverSyncPending()
-	}
+	r.recoverSyncPending()
 
 	path := r.cfg.Path
 	if path == "" {
@@ -186,13 +169,7 @@ func (r *auditLogReceiver) Shutdown(ctx context.Context) error {
 	}
 
 	r.inflightWg.Wait()
-
-	if !r.cfg.IsAsync() {
-		r.recoverSyncPending()
-	}
-
-	r.cancel()
-	r.wg.Wait()
+	r.recoverSyncPending()
 
 	if r.storage != nil {
 		if err := r.storage.Close(ctx); err != nil {
@@ -201,133 +178,6 @@ func (r *auditLogReceiver) Shutdown(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-// processPendingLogsLoop runs the async delivery worker until shutdown.
-func (r *auditLogReceiver) processPendingLogsLoop() {
-	defer r.wg.Done()
-
-	interval := r.cfg.ProcessInterval
-	if interval == 0 {
-		interval = defaultTickerTime
-	}
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-r.ctx.Done():
-			r.logger.Info("Stopping pending audit log worker")
-			return
-		case <-ticker.C:
-			r.processPendingLogs()
-		}
-	}
-}
-
-// processPendingLogs delivers pending entries that are due for retry.
-func (r *auditLogReceiver) processPendingLogs() {
-	if r.storage == nil {
-		return
-	}
-
-	keys, err := r.getPendingKeys()
-	if err != nil {
-		r.logger.Error("Failed to get pending keys", errString(err))
-		return
-	}
-
-	now := time.Now()
-	ageThreshold := r.cfg.ProcessAgeThreshold
-
-	for _, key := range keys {
-		data, err := r.storage.Get(context.Background(), key)
-		if err != nil {
-			r.logger.Debug("Failed to get pending entry", zap.String("key", key), errString(err))
-			continue
-		}
-		if data == nil {
-			r.removeFromPendingKeysList(key)
-			continue
-		}
-
-		var entry pendingAuditEntry
-		if err := json.Unmarshal(data, &entry); err != nil {
-			r.handleCorruptPendingEntry(key, data, err)
-			continue
-		}
-
-		if ageThreshold > 0 && entry.Timestamp.After(now.Add(-ageThreshold)) {
-			continue
-		}
-		if !entry.NextRetryAt.IsZero() && now.Before(entry.NextRetryAt) {
-			continue
-		}
-
-		if r.cfg.CircuitBreaker.IsEnabled() {
-			shouldProcess, _ := r.circuitBreaker.checkCircuitBreakerState(key)
-			if !shouldProcess {
-				continue
-			}
-		}
-
-		if err := r.deliverPendingEntry(key, &entry); err != nil {
-			if isDiscardableProcessingError(err) {
-				r.logger.Warn("Moving pending entry to dead letter after permanent failure",
-					zap.String("key", key),
-					errString(err),
-				)
-				_ = r.moveToDeadLetter(key, &entry, err)
-				continue
-			}
-			r.logger.Error("Pending delivery failed, will retry", zap.String("key", key), errString(err))
-		}
-	}
-}
-
-// deliverPendingEntry runs the pipeline for one pending entry and removes it on success.
-func (r *auditLogReceiver) deliverPendingEntry(key string, entry *pendingAuditEntry) error {
-	logs, err := unmarshalPendingLogs(entry)
-	if err != nil {
-		return consumererror.NewPermanent(err)
-	}
-
-	if err := r.deliverLogs(context.Background(), logs); err != nil {
-		if isDiscardableProcessingError(err) {
-			return err
-		}
-		return r.schedulePendingRetry(key, entry, err)
-	}
-
-	if err := r.deletePendingEntry(key); err != nil {
-		r.logger.Error("Delivered but failed to delete pending entry; downstream sinks must dedupe on audit.record.id",
-			zap.String("pending_key", key),
-			errString(err),
-		)
-	}
-	r.logger.Info("Successfully delivered pending audit log", zap.String("key", key))
-	return nil
-}
-
-func (r *auditLogReceiver) schedulePendingRetry(key string, entry *pendingAuditEntry, deliveryErr error) error {
-	entry.RetryCount++
-	if r.cfg.Delivery.MaxRetries > 0 && entry.RetryCount > r.cfg.Delivery.MaxRetries {
-		_ = r.moveToDeadLetter(key, entry, deliveryErr)
-		return deliveryErr
-	}
-	entry.NextRetryAt = time.Now().Add(r.calculateRetryDelay(entry.RetryCount))
-	data, err := json.Marshal(entry)
-	if err != nil {
-		return err
-	}
-	if err := r.storage.Set(context.Background(), key, data); err != nil {
-		return err
-	}
-	if !isDiscardableProcessingError(deliveryErr) && r.cfg.CircuitBreaker.IsEnabled() {
-		r.circuitBreaker.RecordFailure()
-	}
-	return deliveryErr
 }
 
 func (r *auditLogReceiver) moveToDeadLetter(key string, entry *pendingAuditEntry, cause error) error {
@@ -384,18 +234,6 @@ func (r *auditLogReceiver) handleCorruptPendingEntry(key string, rawData []byte,
 		zap.String("dead_letter_key", dlKey),
 		errString(cause),
 	)
-}
-
-func (r *auditLogReceiver) calculateRetryDelay(attempt int) time.Duration {
-	if attempt < 1 {
-		attempt = 1
-	}
-	delay := float64(r.cfg.Delivery.InitialInterval) * math.Pow(2, float64(attempt-1))
-	maxDelay := float64(r.cfg.Delivery.MaxInterval)
-	if delay > maxDelay {
-		delay = maxDelay
-	}
-	return time.Duration(delay)
 }
 
 func unmarshalPendingLogs(entry *pendingAuditEntry) (plog.Logs, error) {
@@ -611,40 +449,6 @@ func (r *auditLogReceiver) getPendingKeys() ([]string, error) {
 	return keys, nil
 }
 
-func (r *auditLogReceiver) removeFromPendingKeysList(key string) {
-	r.keysListMutex.Lock()
-	defer r.keysListMutex.Unlock()
-
-	keys, err := r.getPendingKeys()
-	if err != nil {
-		r.logger.Error("Failed to get pending keys list for removal", errString(err))
-		return
-	}
-
-	newKeys := make([]string, 0, len(keys))
-	for _, k := range keys {
-		if k != key {
-			newKeys = append(newKeys, k)
-		}
-	}
-
-	if len(newKeys) == 0 {
-		if err := r.storage.Delete(context.Background(), pendingKeysListKey); err != nil {
-			r.logger.Error("Failed to delete empty pending keys list", errString(err))
-		}
-		return
-	}
-
-	data, err := json.Marshal(newKeys)
-	if err != nil {
-		r.logger.Error("Failed to marshal pending keys list", errString(err))
-		return
-	}
-	if err := r.storage.Set(context.Background(), pendingKeysListKey, data); err != nil {
-		r.logger.Error("Failed to update pending keys list", errString(err))
-	}
-}
-
 // storePendingEntry atomically writes a pending entry and updates the pending key index.
 func (r *auditLogReceiver) storePendingEntry(key string, entryData []byte) error {
 	r.keysListMutex.Lock()
@@ -747,7 +551,6 @@ func (r *auditLogReceiver) handleAuditLogs(w http.ResponseWriter, req *http.Requ
 }
 
 // handleOTLP is the shared entry point for protobuf and JSON OTLP audit requests.
-// Flow: parse → sync delivery (200) or async durable accept (202).
 func (r *auditLogReceiver) handleOTLP(w http.ResponseWriter, req *http.Request, body []byte, contentType string, isProto bool) {
 	format := "json"
 	if isProto {
@@ -775,16 +578,6 @@ func (r *auditLogReceiver) handleOTLP(w http.ResponseWriter, req *http.Request, 
 	if numRecords == 0 {
 		r.writeOTLPResponse(w, isProto, http.StatusOK)
 		r.obsrecv.EndLogsOp(ctx, format, 0, nil)
-		return
-	}
-
-	if r.cfg.IsAsync() {
-		if err := r.acceptAsync(w, logs, body, contentType, isProto); err != nil {
-			writeAuditHTTPError(w, err)
-			r.obsrecv.EndLogsOp(ctx, format, numRecords, err)
-			return
-		}
-		r.obsrecv.EndLogsOp(ctx, format, numRecords, nil)
 		return
 	}
 
@@ -817,46 +610,6 @@ func (r *auditLogReceiver) handleOTLP(w http.ResponseWriter, req *http.Request, 
 
 	r.writeOTLPResponse(w, isProto, http.StatusOK)
 	r.obsrecv.EndLogsOp(ctx, format, numRecords, nil)
-}
-
-// acceptAsync persists the request before returning 202, guaranteeing at-least-once delivery.
-func (r *auditLogReceiver) acceptAsync(w http.ResponseWriter, logs plog.Logs, body []byte, contentType string, isProto bool) error {
-	storeBody := body
-	storeContentType := contentType
-	protoBody, err := plogotlp.NewExportRequestFromLogs(logs).MarshalProto()
-	if err != nil {
-		return fmt.Errorf("failed to marshal logs for pending storage: %w", err)
-	}
-	storeBody = protoBody
-	storeContentType = "application/x-protobuf"
-	if isProto {
-		storeBody = body
-		storeContentType = contentType
-	}
-
-	pendingID := uuid.New().String()
-	key := pendingKeyPrefix + pendingID
-	entry := pendingAuditEntry{
-		ID:          pendingID,
-		Timestamp:   time.Now().UTC(),
-		Body:        storeBody,
-		ContentType: storeContentType,
-	}
-	entryData, err := json.Marshal(entry)
-	if err != nil {
-		return err
-	}
-
-	if err := r.storePendingEntry(key, entryData); err != nil {
-		return err
-	}
-
-	r.logger.Info("Accepted audit log for async delivery",
-		zap.String("pending_id", pendingID),
-		zap.Int("log_records", logs.LogRecordCount()))
-
-	r.writeOTLPResponse(w, isProto, http.StatusAccepted)
-	return nil
 }
 
 func (r *auditLogReceiver) writeOTLPResponse(w http.ResponseWriter, isProto bool, status int) {

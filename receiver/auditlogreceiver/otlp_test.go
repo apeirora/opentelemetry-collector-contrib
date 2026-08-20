@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config/confighttp"
@@ -49,23 +48,6 @@ func testSyncConfig() *Config {
 		ServerConfig: confighttp.ServerConfig{NetAddr: netAddr},
 		StorageID:    component.NewIDWithName(component.MustNewType("file_storage"), ""),
 		ResponseMode: ResponseModeSync,
-	}
-}
-
-func testAsyncConfig() *Config {
-	netAddr := confignet.NewDefaultAddrConfig()
-	netAddr.Transport = confignet.TransportTypeTCP
-	netAddr.Endpoint = "localhost:0"
-	return &Config{
-		ServerConfig: confighttp.ServerConfig{NetAddr: netAddr},
-		StorageID:    component.NewIDWithName(component.MustNewType("file_storage"), ""),
-		ResponseMode: ResponseModeAsync,
-		Delivery: DeliveryConfig{
-			InitialInterval: time.Millisecond,
-			MaxInterval:     10 * time.Millisecond,
-		},
-		ProcessInterval:     time.Millisecond,
-		ProcessAgeThreshold: 0,
 	}
 }
 
@@ -116,63 +98,6 @@ func TestHandleOTLPSyncDelivery(t *testing.T) {
 	}
 	if len(mockConsumer.logs) != 1 {
 		t.Fatalf("expected 1 consumed batch, got %d", len(mockConsumer.logs))
-	}
-}
-
-func TestHandleOTLPAsyncAccepted(t *testing.T) {
-	t.Parallel()
-	mockConsumer := &mockConsumer{}
-	r := newTestReceiver(t, testAsyncConfig(), mockConsumer, true)
-
-	requestData := testOTLPRequest(t)
-	req := httptest.NewRequest(http.MethodPost, defaultPath, bytes.NewReader(requestData))
-	req.Header.Set("Content-Type", "application/x-protobuf")
-	w := httptest.NewRecorder()
-
-	r.handleAuditLogs(w, req)
-
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("expected 202, got %d body=%s", w.Code, w.Body.String())
-	}
-	if len(mockConsumer.logs) != 0 {
-		t.Fatal("async accept must not consume synchronously")
-	}
-
-	keys, err := r.getPendingKeys()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(keys) != 1 {
-		t.Fatalf("expected 1 pending key, got %d", len(keys))
-	}
-}
-
-func TestHandleOTLPAsyncWorkerDelivers(t *testing.T) {
-	t.Parallel()
-	mockConsumer := &mockConsumer{}
-	r := newTestReceiver(t, testAsyncConfig(), mockConsumer, true)
-
-	requestData := testOTLPRequest(t)
-	req := httptest.NewRequest(http.MethodPost, defaultPath, bytes.NewReader(requestData))
-	req.Header.Set("Content-Type", "application/x-protobuf")
-	w := httptest.NewRecorder()
-	r.handleAuditLogs(w, req)
-
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("expected 202, got %d", w.Code)
-	}
-
-	r.processPendingLogs()
-
-	if len(mockConsumer.logs) != 1 {
-		t.Fatalf("expected worker delivery, got %d batches", len(mockConsumer.logs))
-	}
-	keys, err := r.getPendingKeys()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(keys) != 0 {
-		t.Fatalf("expected pending queue drained, got %d", len(keys))
 	}
 }
 

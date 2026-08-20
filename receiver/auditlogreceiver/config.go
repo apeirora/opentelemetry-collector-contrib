@@ -13,23 +13,20 @@ import (
 )
 
 const (
-	ResponseModeSync  = "sync"
-	ResponseModeAsync = "async"
+	ResponseModeSync = "sync"
 
 	CircuitOpenReject = "reject"
 	CircuitOpenAccept = "accept"
 
-	defaultResponseMode         = ResponseModeSync
-	defaultCircuitOpenBehavior  = CircuitOpenReject
-	defaultDeliveryInitial = 1 * time.Second
-	defaultDeliveryMax     = 5 * time.Minute
-	defaultProcessInterval = 5 * time.Second
-	defaultProcessAgeAsync = 0
+	defaultResponseMode        = ResponseModeSync
+	defaultCircuitOpenBehavior = CircuitOpenReject
+	defaultDeliveryInitial     = 1 * time.Second
+	defaultDeliveryMax         = 5 * time.Minute
 )
 
 var (
 	errStorageRequired            = errors.New("storage extension is required")
-	errInvalidResponseMode        = errors.New("response_mode must be sync or async")
+	errInvalidResponseMode        = errors.New("response_mode must be sync")
 	errInvalidCircuitOpenBehavior = errors.New("circuit_breaker.open_behavior must be reject or accept")
 	errEmptyEndpoint              = errors.New("endpoint must be specified")
 )
@@ -40,11 +37,10 @@ type Config struct {
 	Path string `mapstructure:"path"`
 
 	// StorageID is required. Sync mode uses it as a write-ahead log before pipeline
-	// delivery (crash recovery). Async mode uses it for the pending delivery queue.
+	// delivery (crash recovery).
 	StorageID component.ID `mapstructure:"storage"`
 
-	// ResponseMode controls HTTP semantics: sync blocks until all sinks confirm (200),
-	// async persists then returns 202 and delivers via the background worker.
+	// ResponseMode controls HTTP semantics and supports only sync mode.
 	ResponseMode string `mapstructure:"response_mode"`
 
 	Delivery DeliveryConfig `mapstructure:"delivery"`
@@ -104,7 +100,7 @@ func (c *Config) Validate() error {
 
 	if c.ResponseMode == "" {
 		c.ResponseMode = defaultResponseMode
-	} else if c.ResponseMode != ResponseModeSync && c.ResponseMode != ResponseModeAsync {
+	} else if c.ResponseMode != ResponseModeSync {
 		return errInvalidResponseMode
 	}
 
@@ -128,18 +124,5 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("delivery.max_interval must be >= delivery.initial_interval")
 	}
 
-	if c.ResponseMode == ResponseModeAsync {
-		if c.ProcessInterval == 0 {
-			c.ProcessInterval = defaultProcessInterval
-		}
-		if c.ProcessAgeThreshold == 0 {
-			c.ProcessAgeThreshold = defaultProcessAgeAsync
-		}
-	}
-
 	return nil
-}
-
-func (c *Config) IsAsync() bool {
-	return c.ResponseMode == ResponseModeAsync
 }
