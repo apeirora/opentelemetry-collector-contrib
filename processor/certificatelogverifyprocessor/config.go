@@ -18,8 +18,7 @@ const (
 )
 
 const (
-	ModeSync     = "sync"
-	ModeDeferred = "deferred"
+	ModeSync = "sync"
 )
 
 const (
@@ -32,12 +31,12 @@ const (
 )
 
 var (
-	errInvalidMode             = errors.New("mode must be sync or deferred")
-	errInvalidFailureMode      = errors.New("failure_mode must be strict or mark")
-	errSyncNeedsKeySource      = errors.New("sync mode requires hmac_key_file, cert_file, or k8s_secret for integrity verification")
-	errHashChainNeedsStorage   = errors.New("hash_chain.enabled requires hash_chain.storage")
-	errDeadLetterNeedsStorage  = errors.New("dead_letter.enabled requires dead_letter.storage")
-	errInvalidDeadLetterMode   = errors.New("dead_letter.failure_modes entries must be strict or mark")
+	errInvalidMode            = errors.New("mode must be sync")
+	errInvalidFailureMode     = errors.New("failure_mode must be strict or mark")
+	errSyncNeedsKeySource     = errors.New("sync mode requires hmac_key_file, cert_file, or k8s_secret for integrity verification")
+	errHashChainNeedsStorage  = errors.New("hash_chain.enabled requires hash_chain.storage")
+	errDeadLetterNeedsStorage = errors.New("dead_letter.enabled requires dead_letter.storage")
+	errInvalidDeadLetterMode  = errors.New("dead_letter.failure_modes entries must be strict or mark")
 )
 
 type Config struct {
@@ -52,18 +51,18 @@ type Config struct {
 }
 
 type DeadLetterConfig struct {
-	Enabled               bool         `mapstructure:"enabled"`
-	StorageID             component.ID `mapstructure:"storage"`
-	KeyPrefix             string       `mapstructure:"key_prefix"`
-	IncludeRecord         *bool        `mapstructure:"include_record"`
-	IncludeResource       *bool        `mapstructure:"include_resource"`
-	Reasons               []string     `mapstructure:"reasons"`
-	FailureModes          []string     `mapstructure:"failure_modes"`
-	MaxEntrySizeBytes     int          `mapstructure:"max_entry_size_bytes"`
-	FailOnStorageError    *bool        `mapstructure:"fail_on_storage_error"`
-	PartitionByStream     bool         `mapstructure:"partition_by_stream"`
-	DeduplicateByRecordID bool         `mapstructure:"deduplicate_by_record_id"`
-	MaintainIndex         bool         `mapstructure:"maintain_index"`
+	Enabled               bool          `mapstructure:"enabled"`
+	StorageID             component.ID  `mapstructure:"storage"`
+	KeyPrefix             string        `mapstructure:"key_prefix"`
+	IncludeRecord         *bool         `mapstructure:"include_record"`
+	IncludeResource       *bool         `mapstructure:"include_resource"`
+	Reasons               []string      `mapstructure:"reasons"`
+	FailureModes          []string      `mapstructure:"failure_modes"`
+	MaxEntrySizeBytes     int           `mapstructure:"max_entry_size_bytes"`
+	FailOnStorageError    *bool         `mapstructure:"fail_on_storage_error"`
+	PartitionByStream     bool          `mapstructure:"partition_by_stream"`
+	DeduplicateByRecordID bool          `mapstructure:"deduplicate_by_record_id"`
+	MaintainIndex         bool          `mapstructure:"maintain_index"`
 	TTL                   time.Duration `mapstructure:"ttl"`
 }
 
@@ -90,7 +89,7 @@ func createDefaultConfig() component.Config {
 func (c *Config) Validate() error {
 	if c.Mode == "" {
 		c.Mode = defaultMode
-	} else if c.Mode != ModeSync && c.Mode != ModeDeferred {
+	} else if c.Mode != ModeSync {
 		return errInvalidMode
 	}
 
@@ -102,10 +101,6 @@ func (c *Config) Validate() error {
 
 	if c.VerificationProfile == "" {
 		c.VerificationProfile = defaultProfile
-	}
-
-	if c.Mode == ModeDeferred {
-		return c.DeadLetter.validate()
 	}
 
 	hasHMACKey := c.hasHMACKeySource()

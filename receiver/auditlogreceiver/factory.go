@@ -15,7 +15,6 @@ import (
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/auditlogreceiver/internal/metadata"
 )
 
-// defaultPath is the Tier-2 audit ingest endpoint per the audit collector spec.
 const defaultPath = "/v1/audit"
 
 const defaultEndpoint = "0.0.0.0:4310"
@@ -39,10 +38,6 @@ func createDefaultConfig() component.Config {
 		},
 		Path:         defaultPath,
 		ResponseMode: defaultResponseMode,
-		Delivery: DeliveryConfig{
-			InitialInterval: defaultDeliveryInitial,
-			MaxInterval:     defaultDeliveryMax,
-		},
 		CircuitBreaker: CircuitBreakerConfig{
 			Enabled: &circuitEnabled,
 		},

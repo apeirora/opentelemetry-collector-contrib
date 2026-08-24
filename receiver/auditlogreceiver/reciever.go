@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strings"
 	"sync"
@@ -29,21 +30,14 @@ import (
 	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal/errorutil"
 )
 
-// TODO: Fix logging of processed logs (count only valid ones).
-// TODO: Investigate how persistence queue in exporters affects delivery guarantees.
-
 const (
-	// pendingKeysListKey indexes all keys under pendingKeyPrefix in storage.
-	pendingKeysListKey = "__pending_keys__"
-	// pendingKeyPrefix is the storage namespace for pending WAL entries.
-	pendingKeyPrefix = "pending/"
-	// deadLetterKeyPrefix is the storage namespace for permanently failed pending entries.
+	pendingKeysListKey  = "__pending_keys__"
+	pendingKeyPrefix    = "pending/"
 	deadLetterKeyPrefix = "dead_letter/"
 
 	rejectedVerifyFailed = "rejected_verify_failed"
 )
 
-// pendingAuditEntry is a durably stored OTLP payload written to WAL.
 type pendingAuditEntry struct {
 	ID          string    `json:"id"`
 	Timestamp   time.Time `json:"timestamp"`
@@ -58,12 +52,15 @@ type auditLogReceiver struct {
 	storage    storage.Client
 	cfg        *Config
 	settings   receiver.Settings
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
 	shutdownWG sync.WaitGroup
 
 	circuitBreaker *circuitBreaker
 	obsrecv        *receiverhelper.ObsReport
 
 	keysListMutex sync.Mutex
+	recoverMutex  sync.Mutex
 	inflightWg    sync.WaitGroup
 }
 
@@ -127,6 +124,11 @@ func (r *auditLogReceiver) Start(ctx context.Context, host component.Host) error
 
 	r.recoverSyncPending()
 
+	loopCtx, cancel := context.WithCancel(context.Background())
+	r.cancel = cancel
+	r.wg.Add(1)
+	go r.recoverPendingLoop(loopCtx)
+
 	path := r.cfg.Path
 	if path == "" {
 		path = defaultPath
@@ -137,11 +139,15 @@ func (r *auditLogReceiver) Start(ctx context.Context, host component.Host) error
 
 	ln, err := r.cfg.ToListener(ctx)
 	if err != nil {
+		cancel()
+		r.wg.Wait()
 		return fmt.Errorf("failed to bind to address %s: %w", r.cfg.NetAddr.Endpoint, err)
 	}
 
 	r.server, err = r.cfg.ToServer(ctx, host.GetExtensions(), r.settings.TelemetrySettings, mux)
 	if err != nil {
+		cancel()
+		r.wg.Wait()
 		return err
 	}
 
@@ -161,6 +167,11 @@ func (r *auditLogReceiver) Start(ctx context.Context, host component.Host) error
 }
 
 func (r *auditLogReceiver) Shutdown(ctx context.Context) error {
+	if r.cancel != nil {
+		r.cancel()
+	}
+	r.wg.Wait()
+
 	if r.server != nil {
 		if err := r.server.Shutdown(ctx); err != nil {
 			r.logger.Error("HTTP server shutdown error", errString(err))
@@ -178,6 +189,22 @@ func (r *auditLogReceiver) Shutdown(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (r *auditLogReceiver) recoverPendingLoop(ctx context.Context) {
+	defer r.wg.Done()
+
+	ticker := time.NewTicker(defaultRecoveryInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			r.recoverSyncPending()
+		}
+	}
 }
 
 func (r *auditLogReceiver) moveToDeadLetter(key string, entry *pendingAuditEntry, cause error) error {
@@ -383,6 +410,11 @@ func (r *auditLogReceiver) recoverSyncPending() {
 		return
 	}
 
+	if !r.recoverMutex.TryLock() {
+		return
+	}
+	defer r.recoverMutex.Unlock()
+
 	keys, err := r.getPendingKeys()
 	if err != nil {
 		r.logger.Error("Failed to list pending entries for recovery", errString(err))
@@ -394,6 +426,13 @@ func (r *auditLogReceiver) recoverSyncPending() {
 
 	r.logger.Info("Recovering pending sync audit logs", zap.Int("count", len(keys)))
 	for _, key := range keys {
+		if r.cfg.CircuitBreaker.IsEnabled() {
+			ok, _ := r.circuitBreaker.checkCircuitBreakerState(key)
+			if !ok {
+				continue
+			}
+		}
+
 		data, err := r.storage.Get(context.Background(), key)
 		if err != nil || data == nil {
 			continue
@@ -449,7 +488,6 @@ func (r *auditLogReceiver) getPendingKeys() ([]string, error) {
 	return keys, nil
 }
 
-// storePendingEntry atomically writes a pending entry and updates the pending key index.
 func (r *auditLogReceiver) storePendingEntry(key string, entryData []byte) error {
 	r.keysListMutex.Lock()
 	defer r.keysListMutex.Unlock()
@@ -520,6 +558,19 @@ func (r *auditLogReceiver) deletePendingEntry(key string) error {
 	return nil
 }
 
+func parseAuditContentType(header string) (string, error) {
+	mediaType, _, err := mime.ParseMediaType(header)
+	if err != nil {
+		return "", fmt.Errorf("unsupported content type %q, expected application/x-protobuf, application/vnd.google.protobuf, or application/json", header)
+	}
+	switch mediaType {
+	case "application/x-protobuf", "application/vnd.google.protobuf", "application/json":
+		return mediaType, nil
+	default:
+		return "", fmt.Errorf("unsupported content type %q, expected application/x-protobuf, application/vnd.google.protobuf, or application/json", header)
+	}
+}
+
 func (r *auditLogReceiver) handleAuditLogs(w http.ResponseWriter, req *http.Request) {
 	r.inflightWg.Add(1)
 	defer r.inflightWg.Done()
@@ -529,9 +580,9 @@ func (r *auditLogReceiver) handleAuditLogs(w http.ResponseWriter, req *http.Requ
 		return
 	}
 
-	contentType := req.Header.Get("Content-Type")
-	if contentType != "application/x-protobuf" && contentType != "application/json" && contentType != "application/vnd.google.protobuf" {
-		writeAuditHTTPError(w, consumererror.NewPermanent(fmt.Errorf("unsupported content type %q, expected application/x-protobuf, application/vnd.google.protobuf, or application/json", contentType)))
+	contentType, err := parseAuditContentType(req.Header.Get("Content-Type"))
+	if err != nil {
+		writeAuditHTTPError(w, consumererror.NewPermanent(err))
 		return
 	}
 
@@ -542,16 +593,15 @@ func (r *auditLogReceiver) handleAuditLogs(w http.ResponseWriter, req *http.Requ
 	}
 	defer req.Body.Close()
 
-	switch {
-	case contentType == "application/x-protobuf", contentType == "application/vnd.google.protobuf":
-		r.handleOTLP(w, req, body, contentType, true)
-	case contentType == "application/json":
-		r.handleOTLP(w, req, body, contentType, false)
+	switch contentType {
+	case "application/x-protobuf", "application/vnd.google.protobuf":
+		r.handleOTLP(w, req, body, true)
+	case "application/json":
+		r.handleOTLP(w, req, body, false)
 	}
 }
 
-// handleOTLP is the shared entry point for protobuf and JSON OTLP audit requests.
-func (r *auditLogReceiver) handleOTLP(w http.ResponseWriter, req *http.Request, body []byte, contentType string, isProto bool) {
+func (r *auditLogReceiver) handleOTLP(w http.ResponseWriter, req *http.Request, body []byte, isProto bool) {
 	format := "json"
 	if isProto {
 		format = "protobuf"
@@ -646,7 +696,6 @@ func (r *auditLogReceiver) writeOTLPExportResponse(w http.ResponseWriter, isProt
 	_, _ = w.Write(responseData)
 }
 
-// isDiscardableProcessingError reports errors that must not be retried (verify failure, permanent exporter errors).
 func isDiscardableProcessingError(err error) bool {
 	if err == nil {
 		return false

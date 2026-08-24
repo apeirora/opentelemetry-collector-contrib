@@ -10,7 +10,7 @@ It is intended for operators and integrators wiring SDK → collector → backen
 
 SDK reference: `opentelemetry-go/sdk/auditlog/AUDIT_LOG_README.md` and `PITFALLS_BACKLOG.md`.
 
-**Scope:** This document covers the **sync pipeline only** — SDK synchronous export (`WaitOnExport: true`), collector `response_mode: sync`, processor `mode: sync`. Receiver `response_mode: async`, processor `mode: deferred`, and SDK `WaitOnExport: false` are **out of scope** and not recommended for Tier-2 audit.
+**Scope:** This document covers the **sync pipeline only** — SDK synchronous export (`WaitOnExport: true`), collector `response_mode: sync`, processor `mode: sync`. Receiver `response_mode: async` and processor `mode: deferred` are **rejected at validation** and not supported for Tier-2 audit.
 
 ---
 
@@ -447,7 +447,7 @@ When `circuit_breaker.enabled` is true (default), consecutive pipeline failures 
 | `open_behavior` | HTTP response | WAL | Client / SDK implication |
 |-----------------|---------------|-----|---------------------------|
 | **`reject`** (default) | **503** | Not written | Collector reachable → SDK returns `503 rejected` (not stored). App retries when backend recovers. No duplicate WAL from circuit-open rejects. |
-| **`accept`** | **202** | Written | Collector accepted for deferred delivery. Delivery runs when circuit closes (`recoverSyncPending` / next successful path). App/SDK must treat **202** as accepted — do not auto-retry the same record unless you accept at-least-once overlap with recovery. **Sinks still dedupe on `audit.record.id`**. |
+| **`accept`** | **202** | Written | Collector accepted for deferred delivery. The recovery ticker (and start/shutdown `recoverSyncPending`) replays WAL entries when the circuit allows processing. App/SDK must treat **202** as accepted — do not auto-retry the same record unless you accept at-least-once overlap with recovery. **Sinks still dedupe on `audit.record.id`**. |
 
 Verification failures (`rejected_verify_failed`) are permanent and do **not** trip the breaker for that record; backend outages do.
 

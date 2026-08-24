@@ -6,13 +6,11 @@
 #    retry on both sides for the same record; HTTP 200/400/503 from a reachable
 #    collector are handled synchronously by the app, not queued in the SDK.
 #
-# 2) Async is unsafe for now — stay sync end-to-end:
+# 2) Sync end-to-end only — response_mode async is rejected at validation:
 #    SDK: synchronous export when collector is reachable (WaitOnExport); store-and-retry
 #    only when collector is unreachable (-filestore for durable offline recovery)
 #    Receiver: response_mode sync — blocks until pipeline finishes, returns 200/400/503.
-#              Do NOT use response_mode async (that mode returns 202 immediately and
-#              delivers in a background worker).
-#    Processor: certificatelogverify only (no other processors — no batch/attributes/transform/filter)
+#    Processor: certificatelogverify mode sync only (deferred mode is rejected)
 #    Exporters: sending_queue.enabled false (no background export queue)
 #
 # 3) SDK store — always required (in-memory default; -filestore when collector may
@@ -21,7 +19,7 @@
 #    SDK store is separate from collector redis extensions below (app-side prefix/DB).
 #
 # 4) Collector receiver storage = WAL only — written before pipeline delivery,
-#    deleted on success; recoverSyncPending on restart. Not a competing retry worker.
+#    deleted on success; recoverSyncPending on start/shutdown and via recovery ticker.
 #
 # 5) Propagate backend failures to the SDK — sending_queue false lets inline
 #    retry_on_failure run inside the HTTP request (bounded by max_elapsed_time).
@@ -31,8 +29,7 @@
 #    400 = integrity rejected (permanent). 503 = transient pipeline/backend failure.
 #
 # 7) Avoid — SDK durable backlog replay while collector is up and reachable;
-#    collector response_mode async without clear handoff at 202; exporter
-#    sending_queue with storage competing with SDK offline store.
+#    exporter sending_queue with storage competing with SDK offline store.
 #
 # 8) Split collector storage namespaces (pitfall h):
 #    redis_storage/wal      — auditlogreceiver sync WAL only (pending/, __pending_keys__)
@@ -45,7 +42,7 @@
 #
 # 10) Circuit breaker open_behavior (sync only, pitfall l):
 #     reject (default) — 503, no WAL; SDK retries when collector reachable.
-#     accept — WAL + 202, deferred delivery via recoverSyncPending when circuit closes.
+#     accept — WAL + 202; recovery ticker / recoverSyncPending replays when circuit allows.
 #
 # 11) Verify failures (n) — HTTP 400 when all records fail; certificatelogverify DLQ
 #     stores failed records (dead_letter.enabled). Corrupt WAL (o) — receiver logs Error

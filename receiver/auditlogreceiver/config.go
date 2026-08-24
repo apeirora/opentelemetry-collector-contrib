@@ -5,7 +5,6 @@ package auditlogreceiver
 
 import (
 	"errors"
-	"fmt"
 	"time"
 
 	"go.opentelemetry.io/collector/component"
@@ -20,8 +19,7 @@ const (
 
 	defaultResponseMode        = ResponseModeSync
 	defaultCircuitOpenBehavior = CircuitOpenReject
-	defaultDeliveryInitial     = 1 * time.Second
-	defaultDeliveryMax         = 5 * time.Minute
+	defaultRecoveryInterval    = 5 * time.Second
 )
 
 var (
@@ -43,19 +41,7 @@ type Config struct {
 	// ResponseMode controls HTTP semantics and supports only sync mode.
 	ResponseMode string `mapstructure:"response_mode"`
 
-	Delivery DeliveryConfig `mapstructure:"delivery"`
-
-	ProcessInterval time.Duration `mapstructure:"process_interval"`
-
-	ProcessAgeThreshold time.Duration `mapstructure:"process_age_threshold"`
-
 	CircuitBreaker CircuitBreakerConfig `mapstructure:"circuit_breaker"`
-}
-
-type DeliveryConfig struct {
-	MaxRetries      int           `mapstructure:"max_retries"`
-	InitialInterval time.Duration `mapstructure:"initial_interval"`
-	MaxInterval     time.Duration `mapstructure:"max_interval"`
 }
 
 type CircuitBreakerConfig struct {
@@ -67,6 +53,7 @@ type CircuitBreakerConfig struct {
 
 	// OpenBehavior controls sync-mode ingest when the circuit is open:
 	// reject (default) returns 503 without WAL; accept persists to WAL and returns 202.
+	// Deferred accept entries are replayed by the recovery loop when the circuit allows processing.
 	OpenBehavior string `mapstructure:"open_behavior"`
 }
 
@@ -112,16 +99,6 @@ func (c *Config) Validate() error {
 
 	if ob := c.CircuitBreaker.OpenBehaviorMode(); ob != CircuitOpenReject && ob != CircuitOpenAccept {
 		return errInvalidCircuitOpenBehavior
-	}
-
-	if c.Delivery.InitialInterval == 0 {
-		c.Delivery.InitialInterval = defaultDeliveryInitial
-	}
-	if c.Delivery.MaxInterval == 0 {
-		c.Delivery.MaxInterval = defaultDeliveryMax
-	}
-	if c.Delivery.MaxInterval < c.Delivery.InitialInterval {
-		return fmt.Errorf("delivery.max_interval must be >= delivery.initial_interval")
 	}
 
 	return nil

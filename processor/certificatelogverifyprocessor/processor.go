@@ -30,10 +30,7 @@ const (
 	lastStateChangeAtKey   = "last_state_change_at"
 	statusPassed           = "passed"
 	statusFailed           = "failed"
-	statusDeferred         = "deferred"
 	reasonOK               = "ok"
-	reasonDeferred         = "deferred_by_policy"
-	tier2AcceptedPending   = "accepted_pending_verify"
 	tier2VerifiedQueued    = "verified_queued"
 	tier2RejectedVerify    = "rejected_verify_failed"
 )
@@ -51,14 +48,9 @@ type certificateHashProcessor struct {
 func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settings) (*certificateHashProcessor, error) {
 	logger := componentLogger(settings.Logger)
 
-	var hmacKey []byte
-	var cert *x509.Certificate
-	if cfg.Mode == ModeSync {
-		var err error
-		hmacKey, cert, err = loadSyncVerificationKeys(cfg, logger)
-		if err != nil {
-			return nil, err
-		}
+	hmacKey, cert, err := loadSyncVerificationKeys(cfg, logger)
+	if err != nil {
+		return nil, err
 	}
 
 	return &certificateHashProcessor{
@@ -90,11 +82,6 @@ func (p *certificateHashProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs
 		resource := rl.Resource()
 		rl.ScopeLogs().RemoveIf(func(sl plog.ScopeLogs) bool {
 			sl.LogRecords().RemoveIf(func(lr plog.LogRecord) bool {
-				if p.config.Mode == ModeDeferred {
-					p.markDeferred(lr)
-					return false
-				}
-
 				if reason, err := p.verifyAuditLogRecord(resource, lr); err != nil {
 					if dlErr := p.handleVerificationFailure(ctx, resource, lr, reason, err); dlErr != nil {
 						deadLetterErr = dlErr
@@ -147,18 +134,6 @@ func (p *certificateHashProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs
 		}
 	}
 	return nil
-}
-
-func (p *certificateHashProcessor) markDeferred(lr plog.LogRecord) {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	attrs := lr.Attributes()
-	attrs.PutStr(verifyStatusKey, statusDeferred)
-	attrs.PutStr(verifyReasonKey, reasonDeferred)
-	attrs.PutStr(verifiedAtKey, "")
-	attrs.PutStr(verificationProfileKey, p.config.VerificationProfile)
-	attrs.PutStr(tier2StatusKey, tier2AcceptedPending)
-	attrs.PutStr(exportStatusKey, tier2AcceptedPending)
-	attrs.PutStr(lastStateChangeAtKey, now)
 }
 
 func (p *certificateHashProcessor) markPassed(lr plog.LogRecord) {

@@ -4,17 +4,19 @@
 package certificatelogverifyprocessor
 
 import (
+	"errors"
 	"testing"
 
 	"go.opentelemetry.io/collector/component"
 )
 
-func TestValidateDeferredModeDoesNotRequireSecret(t *testing.T) {
+func TestValidateRejectsDeferredMode(t *testing.T) {
 	cfg := &Config{
-		Mode: ModeDeferred,
+		Mode:        "deferred",
+		HmacKeyFile: "hmac.key",
 	}
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate returned error: %v", err)
+	if err := cfg.Validate(); !errors.Is(err, errInvalidMode) {
+		t.Fatalf("expected invalid mode, got %v", err)
 	}
 }
 

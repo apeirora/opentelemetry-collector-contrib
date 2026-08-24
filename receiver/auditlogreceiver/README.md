@@ -24,7 +24,7 @@ Watch collector logs (and alert on storage errors / growth of WAL `pending/` key
 | `Cleared sync WAL entry after successful delivery` | Info | WAL deleted after pipeline success |
 | `Sync delivery failed, WAL entry retained for recovery` | Warn | Transient pipeline failure; entry kept for retry/recovery |
 | `Delivered but failed to delete pending entry; downstream sinks must dedupe on audit.record.id` | Error | Orphan risk — export succeeded but WAL delete failed |
-| `Recovering pending sync audit logs` | Info | Startup recovery batch (`count`) |
+| `Recovering pending sync audit logs` | Info | Startup / recovery ticker batch (`count`) |
 | `Recovered and cleared sync WAL entry` | Info | Recovery replay succeeded and WAL cleared |
 | `Recovery delivery failed, WAL entry retained` | Warn | Recovery replay failed transiently; entry kept |
 | `Recovered but failed to delete pending entry; downstream sinks must dedupe on audit.record.id` | Error | Recovery delivered but WAL delete failed |
@@ -37,7 +37,7 @@ Watch collector logs (and alert on storage errors / growth of WAL `pending/` key
 In sync mode, when the circuit breaker is open, `circuit_breaker.open_behavior` chooses:
 
 - **`reject`** (default) — HTTP **503**, no WAL write. Use with SDK `WaitOnExport` so the app retries when the backend recovers.
-- **`accept`** — Persist to WAL, HTTP **202**, deliver when the circuit closes (recovery). Use when apps cannot tolerate 503 on valid records during outages; sinks still **must dedupe on `audit.record.id`**.
+- **`accept`** — Persist to WAL, HTTP **202**, deliver via the recovery ticker when the circuit allows processing. Use when apps cannot tolerate 503 on valid records during outages; sinks still **must dedupe on `audit.record.id`**.
 
 ## Quick Start with Docker
 

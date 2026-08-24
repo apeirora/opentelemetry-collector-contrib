@@ -36,30 +36,6 @@ func newCircuitBreaker(config CircuitBreakerConfig, logger *zap.Logger) *circuit
 	}
 }
 
-func (cb *circuitBreaker) IsOpen() bool {
-	cb.mutex.RLock()
-	defer cb.mutex.RUnlock()
-
-	if cb.state == circuitOpen {
-		openDuration := cb.config.CircuitOpenDuration
-		if openDuration == 0 {
-			openDuration = time.Minute
-		}
-		if time.Since(cb.lastFailureTime) >= openDuration {
-			cb.state = circuitHalfOpen
-			cb.logger.Info("Circuit breaker transitioning to half-open state")
-		}
-		return cb.state == circuitOpen
-	}
-	return false
-}
-
-func (cb *circuitBreaker) IsHalfOpen() bool {
-	cb.mutex.RLock()
-	defer cb.mutex.RUnlock()
-	return cb.state == circuitHalfOpen
-}
-
 func (cb *circuitBreaker) RecordSuccess() {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
@@ -111,7 +87,6 @@ func (cb *circuitBreaker) shouldAttemptProcessing() bool {
 	return cb.state == circuitClosed || cb.state == circuitHalfOpen
 }
 
-// CheckAndUpdateState checks if the circuit breaker should transition states
 func (cb *circuitBreaker) checkAndUpdateState() {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
@@ -128,7 +103,6 @@ func (cb *circuitBreaker) checkAndUpdateState() {
 	}
 }
 
-// checkCircuitBreakerState checks and updates circuit breaker state, returns true if processing should continue
 func (cb *circuitBreaker) checkCircuitBreakerState(entryID string) (bool, error) {
 	cb.checkAndUpdateState()
 

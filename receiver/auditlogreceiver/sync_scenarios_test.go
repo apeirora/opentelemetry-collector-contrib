@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/consumer/consumererror"
@@ -419,6 +420,54 @@ func TestSyncCircuitBreakerOpenAcceptReturns202(t *testing.T) {
 	}
 	if len(keys) != 1 {
 		t.Fatalf("circuit open accept must write WAL, got %d keys", len(keys))
+	}
+}
+
+func TestSyncCircuitBreakerOpenAcceptRecoversWhenCircuitCloses(t *testing.T) {
+	t.Parallel()
+	cfg := testSyncConfig()
+	enabled := true
+	cfg.CircuitBreaker.Enabled = &enabled
+	cfg.CircuitBreaker.CircuitOpenThreshold = 1
+	cfg.CircuitBreaker.CircuitOpenDuration = time.Millisecond
+	cfg.CircuitBreaker.OpenBehavior = CircuitOpenAccept
+
+	sink := &mockConsumer{}
+	r := newTestReceiver(t, cfg, sink, true)
+	r.circuitBreaker.RecordFailure()
+
+	w := postSyncOTLP(t, r, testOTLPRequest(t), "application/x-protobuf")
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("circuit open accept: expected 202, got %d", w.Code)
+	}
+
+	time.Sleep(2 * time.Millisecond)
+	r.recoverSyncPending()
+
+	if len(sink.logs) != 1 {
+		t.Fatalf("expected recovery after circuit half-open, got %d batches", len(sink.logs))
+	}
+	keys, err := r.getPendingKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("expected WAL drained after recovery, got %d keys", len(keys))
+	}
+}
+
+func TestHandleOTLPJSONContentTypeWithCharset(t *testing.T) {
+	t.Parallel()
+	sink := &mockConsumer{}
+	r := newTestReceiver(t, testSyncConfig(), sink, true)
+
+	body := testOTLPBatchRequest(t, 1, true)
+	w := postSyncOTLP(t, r, body, "application/json; charset=utf-8")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for json with charset, got %d body=%s", w.Code, w.Body.String())
+	}
+	if len(sink.logs) != 1 {
+		t.Fatalf("expected 1 consumed batch, got %d", len(sink.logs))
 	}
 }
 

@@ -167,7 +167,7 @@ Component type: `certificatelogverify`.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `mode` | `sync` | `sync` verifies each record; `deferred` skips verification and marks records as deferred |
+| `mode` | `sync` | Only `sync` is supported; verifies each record (`deferred` is rejected) |
 | `failure_mode` | `strict` | `strict` drops failed records and fails the pipeline; `mark` annotates failures and continues |
 | `verification_profile` | `default` | Label written to `verification_profile` on each record; does not change verification logic |
 | `hmac_key_file` | — | Path to HMAC key file (required in `sync` mode unless cert or k8s key is set) |
@@ -242,7 +242,7 @@ Use `dead_letter.reasons` to filter which failures are stored. When omitted or e
 | `k8s_secret.hmac_key_entry` | — | Secret key containing the HMAC key |
 | `k8s_secret.cert_key` | — | Secret key containing the certificate PEM |
 
-In `sync` mode, at least one key source must be configured: `hmac_key_file`, `cert_file`, or `k8s_secret` with `hmac_key_entry` and/or `cert_key`. `deferred` mode does not require keys.
+In `sync` mode, at least one key source must be configured: `hmac_key_file`, `cert_file`, or `k8s_secret` with `hmac_key_entry` and/or `cert_key`.
 
 #### Example configuration
 
@@ -396,10 +396,10 @@ After verification, the processor **mutates** each record and adds outcome metad
 
 | Attribute | Description |
 |-----------|-------------|
-| `verify_status` | `passed`, `failed`, or `deferred` |
+| `verify_status` | `passed` or `failed` |
 | `verify_reason` | Machine-readable reason (e.g. `ok`, `integrity_mismatch`) |
 | `verify_details` | Error details when verification fails |
-| `verified_at` | RFC3339 timestamp of verification (empty when deferred) |
+| `verified_at` | RFC3339 timestamp of verification |
 | `verification_profile` | Copy of configured `verification_profile` |
 | `tier2_status` | Tier-2 lifecycle status (e.g. `verified_queued`, `rejected_verify_failed`) |
 | `export_status_overall` | Mirrors `tier2_status` for export routing |
@@ -430,7 +430,7 @@ Outcome attributes (`verify_status`, `tier2_status`, etc.) are written by the pr
 
 | Attribute | Description |
 |-----------|-------------|
-| `verify_status` | `passed`, `failed`, or `deferred` |
+| `verify_status` | `passed` or `failed` |
 | `verify_reason` | Machine-readable reason (e.g. `ok`, `integrity_mismatch`) |
 | `verify_details` | Error details when verification fails |
 | `verified_at` | RFC3339 timestamp of verification |
