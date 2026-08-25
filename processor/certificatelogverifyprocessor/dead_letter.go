@@ -61,9 +61,9 @@ func (s *deadLetterStore) shouldStore(reason string, processorFailureMode string
 	return true
 }
 
-func (s *deadLetterStore) store(ctx context.Context, resource pcommon.Resource, lr plog.LogRecord, reason string, verifyErr error, processorFailureMode, verificationProfile string) error {
+func (s *deadLetterStore) store(ctx context.Context, resource pcommon.Resource, lr plog.LogRecord, reason string, verifyErr error, processorFailureMode, verificationProfile string) (bool, error) {
 	if !s.shouldStore(reason, processorFailureMode) {
-		return nil
+		return false, nil
 	}
 
 	recordID := attrString(lr, auditAttrRecordID)
@@ -86,38 +86,38 @@ func (s *deadLetterStore) store(ctx context.Context, resource pcommon.Resource, 
 	if s.cfg.ShouldIncludeRecord() {
 		recordPayload, err := marshalLogRecord(lr)
 		if err != nil {
-			return fmt.Errorf("dead letter record marshal: %w", err)
+			return false, fmt.Errorf("dead letter record marshal: %w", err)
 		}
 		entry.Record = recordPayload
 	}
 	if s.cfg.ShouldIncludeResource() {
 		resourcePayload, err := marshalResource(resource)
 		if err != nil {
-			return fmt.Errorf("dead letter resource marshal: %w", err)
+			return false, fmt.Errorf("dead letter resource marshal: %w", err)
 		}
 		entry.Resource = resourcePayload
 	}
 
 	payload, err := json.Marshal(entry)
 	if err != nil {
-		return fmt.Errorf("dead letter entry marshal: %w", err)
+		return false, fmt.Errorf("dead letter entry marshal: %w", err)
 	}
 	if s.cfg.MaxEntrySizeBytes > 0 && len(payload) > s.cfg.MaxEntrySizeBytes {
-		return fmt.Errorf("dead letter entry size %d exceeds max_entry_size_bytes %d", len(payload), s.cfg.MaxEntrySizeBytes)
+		return false, fmt.Errorf("dead letter entry size %d exceeds max_entry_size_bytes %d", len(payload), s.cfg.MaxEntrySizeBytes)
 	}
 
 	key, err := s.entryKey(entry.ID, recordID, streamID)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	if err := s.client.Set(ctx, key, payload); err != nil {
-		return fmt.Errorf("dead letter storage set: %w", err)
+		return false, fmt.Errorf("dead letter storage set: %w", err)
 	}
 
 	if s.cfg.MaintainIndex {
 		if err := s.appendIndex(ctx, key); err != nil {
-			return fmt.Errorf("dead letter index update: %w", err)
+			return false, fmt.Errorf("dead letter index update: %w", err)
 		}
 	}
 
@@ -127,7 +127,7 @@ func (s *deadLetterStore) store(ctx context.Context, resource pcommon.Resource, 
 		zap.String("audit_record_id", recordID),
 		zap.String("stream_id", streamID),
 	)
-	return nil
+	return true, nil
 }
 
 func (s *deadLetterStore) entryKey(entryID, recordID, streamID string) (string, error) {

@@ -8,6 +8,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -51,6 +52,24 @@ func buildSignedHMACRecord(t *testing.T, recordID string) plog.Logs {
 	sl := rl.ScopeLogs().AppendEmpty()
 	lr.CopyTo(sl.LogRecords().AppendEmpty())
 	return logs
+}
+
+func TestDumpSignedOTLPForDocker(t *testing.T) {
+	if os.Getenv("DUMP_OTLP") == "" {
+		t.Skip("set DUMP_OTLP=1 to write signed payloads")
+	}
+	dir := filepath.Join("testdata", "docker")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	valid := buildSignedHMACRecord(t, "rec-docker-pass")
+	invalid := buildSignedHMACRecord(t, "rec-docker-fail")
+	invalid.ResourceLogs().At(0).ScopeLogs().At(0).LogRecords().At(0).Attributes().PutStr(auditAttrIntegrityVal, "00")
+	marshaler := &plog.JSONMarshaler{}
+	validJSON, err := marshaler.MarshalLogs(valid)
+	require.NoError(t, err)
+	invalidJSON, err := marshaler.MarshalLogs(invalid)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "otlp-valid.json"), validJSON, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "otlp-invalid.json"), invalidJSON, 0o644))
 }
 
 func newTestProcessor(t *testing.T, cfg *Config) *certificateHashProcessor {

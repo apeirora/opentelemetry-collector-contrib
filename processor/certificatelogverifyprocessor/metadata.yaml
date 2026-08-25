@@ -11,14 +11,61 @@ status:
 
 tests:
   config:
+    mode: sync
+    failure_mode: mark
+    hmac_key_file: testdata/dev_hmac_key.txt
+
+attributes:
+  outcome:
+    description: Verification outcome for the log record
+    type: string
+    enum: [passed, failed]
+  reason:
+    description: Machine-readable verification reason
+    type: string
+    enum:
+      - ok
+      - missing_integrity_value
+      - missing_integrity_algorithm
+      - canonicalization_failed
+      - canonical_payload_empty
+      - unsupported_integrity_algorithm
+      - hmac_key_unavailable
+      - certificate_unavailable
+      - invalid_integrity_encoding
+      - hmac_compute_failed
+      - hash_compute_failed
+      - integrity_mismatch
+      - missing_stream_id
+      - hash_chain_storage_error
+      - prev_hash_mismatch
+      - sequence_not_increasing
+      - unexpected_prev_hash
+      - hash_chain_compute_failed
+  result:
+    description: Dead-letter store result
+    type: string
+    enum: [stored, skipped, failed]
 
 telemetry:
   metrics:
-    certificatelogverify_processor_processed_logs:
-      description: Number of log records verified with certificate signature.
+    processor_certificatelogverify_records:
+      description: Number of audit log records verified by the certificatelogverify processor
       stability:
         level: development
       unit: "{records}"
       enabled: true
-      histogram:
+      sum:
         value_type: int
+        monotonic: true
+      attributes: [outcome, reason]
+    processor_certificatelogverify_dead_letter:
+      description: Number of verification failures handled by the dead-letter queue
+      stability:
+        level: development
+      unit: "{records}"
+      enabled: true
+      sum:
+        value_type: int
+        monotonic: true
+      attributes: [result, reason]

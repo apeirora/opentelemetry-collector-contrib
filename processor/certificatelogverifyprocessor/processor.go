@@ -16,7 +16,11 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/processor"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/processor/certificatelogverifyprocessor/internal/metadata"
 )
 
 const (
@@ -43,6 +47,7 @@ type certificateHashProcessor struct {
 	cert       *x509.Certificate
 	hashChain  *hashChainStore
 	deadLetter *deadLetterStore
+	telemetry  *metadata.TelemetryBuilder
 }
 
 func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settings) (*certificateHashProcessor, error) {
@@ -53,12 +58,18 @@ func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settin
 		return nil, err
 	}
 
+	telemetry, err := metadata.NewTelemetryBuilder(settings.TelemetrySettings)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create telemetry builder: %w", err)
+	}
+
 	return &certificateHashProcessor{
-		config:   cfg,
-		logger:   logger,
-		nextLogs: nextLogs,
-		hmacKey:  hmacKey,
-		cert:     cert,
+		config:    cfg,
+		logger:    logger,
+		nextLogs:  nextLogs,
+		hmacKey:   hmacKey,
+		cert:      cert,
+		telemetry: telemetry,
 	}, nil
 }
 
@@ -89,7 +100,6 @@ func (p *certificateHashProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs
 					verificationErr = fmt.Errorf("%s: %w", tier2RejectedVerify, err)
 					return p.config.FailureMode == FailureModeStrict
 				}
-				p.markPassed(lr)
 				if p.hashChain != nil {
 					integrityHash, err := integrityHashHex(lr)
 					if err != nil {
@@ -105,6 +115,7 @@ func (p *certificateHashProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs
 						lr:            lr,
 					})
 				}
+				p.markPassed(ctx, lr)
 				return false
 			})
 			return sl.LogRecords().Len() == 0
@@ -136,7 +147,7 @@ func (p *certificateHashProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs
 	return nil
 }
 
-func (p *certificateHashProcessor) markPassed(lr plog.LogRecord) {
+func (p *certificateHashProcessor) markPassed(ctx context.Context, lr plog.LogRecord) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	attrs := lr.Attributes()
 	attrs.PutStr(verifyStatusKey, statusPassed)
@@ -146,21 +157,52 @@ func (p *certificateHashProcessor) markPassed(lr plog.LogRecord) {
 	attrs.PutStr(tier2StatusKey, tier2VerifiedQueued)
 	attrs.PutStr(exportStatusKey, tier2VerifiedQueued)
 	attrs.PutStr(lastStateChangeAtKey, now)
+	p.recordVerifyOutcome(ctx, statusPassed, reasonOK)
 }
 
 func (p *certificateHashProcessor) handleVerificationFailure(ctx context.Context, resource pcommon.Resource, lr plog.LogRecord, reason string, err error) error {
 	p.markFailed(lr, reason, err)
+	p.recordVerifyOutcome(ctx, statusFailed, reason)
 	p.logger.Error("Failed to verify audit log record", errString(err))
 	if p.deadLetter == nil {
+		p.recordDeadLetter(ctx, "skipped", reason)
 		return nil
 	}
-	if dlErr := p.deadLetter.store(ctx, resource, lr, reason, err, p.config.FailureMode, p.config.VerificationProfile); dlErr != nil {
+	stored, dlErr := p.deadLetter.store(ctx, resource, lr, reason, err, p.config.FailureMode, p.config.VerificationProfile)
+	if dlErr != nil {
+		p.recordDeadLetter(ctx, "failed", reason)
 		p.logger.Error("Failed to store record in dead letter queue", errString(dlErr))
 		if p.config.DeadLetter.ShouldFailOnStorageError() {
 			return dlErr
 		}
+		return nil
+	}
+	if stored {
+		p.recordDeadLetter(ctx, "stored", reason)
+	} else {
+		p.recordDeadLetter(ctx, "skipped", reason)
 	}
 	return nil
+}
+
+func (p *certificateHashProcessor) recordVerifyOutcome(ctx context.Context, outcome, reason string) {
+	if p.telemetry == nil {
+		return
+	}
+	p.telemetry.ProcessorCertificatelogverifyRecords.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("outcome", outcome),
+		attribute.String("reason", reason),
+	))
+}
+
+func (p *certificateHashProcessor) recordDeadLetter(ctx context.Context, result, reason string) {
+	if p.telemetry == nil {
+		return
+	}
+	p.telemetry.ProcessorCertificatelogverifyDeadLetter.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("result", result),
+		attribute.String("reason", reason),
+	))
 }
 
 func (p *certificateHashProcessor) markFailed(lr plog.LogRecord, reason string, err error) {
@@ -214,5 +256,8 @@ func getStorageClient(ctx context.Context, host component.Host, storageID compon
 }
 
 func (p *certificateHashProcessor) Shutdown(ctx context.Context) error {
+	if p.telemetry != nil {
+		p.telemetry.Shutdown()
+	}
 	return nil
 }

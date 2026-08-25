@@ -407,6 +407,17 @@ After verification, the processor **mutates** each record and adds outcome metad
 
 **Sink contract:** expect these fields on exported audit records. With `failure_mode: mark`, filter on `verify_status` / `tier2_status` before durable storage if you only want verified records.
 
+## Internal telemetry
+
+When collector `service.telemetry.metrics` is enabled (not `level: none`), the processor emits:
+
+| Metric | Attributes | Description |
+|--------|------------|-------------|
+| `otelcol_processor_certificatelogverify_records` | `outcome`=`passed`\|`failed`, `reason` | Succeeded / failed verified log records |
+| `otelcol_processor_certificatelogverify_dead_letter` | `result`=`stored`\|`skipped`\|`failed`, `reason` | Dead-letter handling for verify failures |
+
+Use `outcome=passed` vs `outcome=failed` for succeed/fail rates. `reason` is the same machine-readable set as `verify_reason` (for example `ok`, `integrity_mismatch`).
+
 ## Expected Log Attributes
 
 ### Required

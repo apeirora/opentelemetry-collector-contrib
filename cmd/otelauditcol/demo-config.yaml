@@ -59,7 +59,13 @@ service:
     logs:
       level: info
     metrics:
-      level: none
+      level: detailed
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: "0.0.0.0"
+                port: 8888
   extensions: [redis_storage/wal, redis_storage/audit_meta]
   pipelines:
     logs/audit:

@@ -13,6 +13,7 @@ services:
       - redis
     ports:
       - "4310:4310"
+      - "8888:8888"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

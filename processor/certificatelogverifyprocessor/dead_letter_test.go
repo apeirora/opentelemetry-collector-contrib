@@ -32,7 +32,7 @@ func TestDeadLetterStoresFailedRecord(t *testing.T) {
 	lr.Attributes().PutStr(auditAttrRecordID, "rec-dlq-1")
 	lr.Attributes().PutStr(auditAttrSourceID, "stream-a")
 
-	err := dlq.store(context.Background(), resource, lr, "integrity_mismatch", errTestIntegrityMismatch, FailureModeStrict, "default")
+	_, err := dlq.store(context.Background(), resource, lr, "integrity_mismatch", errTestIntegrityMismatch, FailureModeStrict, "default")
 	if err != nil {
 		t.Fatalf("store: %v", err)
 	}
@@ -74,14 +74,14 @@ func TestDeadLetterReasonFilter(t *testing.T) {
 	lr := plog.NewLogRecord()
 	lr.Attributes().PutStr(auditAttrRecordID, "rec-1")
 
-	if err := dlq.store(context.Background(), resource, lr, "missing_integrity_value", errTestMissingIntegrity, FailureModeStrict, "default"); err != nil {
+	if _, err := dlq.store(context.Background(), resource, lr, "missing_integrity_value", errTestMissingIntegrity, FailureModeStrict, "default"); err != nil {
 		t.Fatalf("store: %v", err)
 	}
 	if len(storage.data) != 0 {
 		t.Fatal("expected no dead letter entry for filtered reason")
 	}
 
-	if err := dlq.store(context.Background(), resource, lr, "integrity_mismatch", errTestIntegrityMismatch, FailureModeStrict, "default"); err != nil {
+	if _, err := dlq.store(context.Background(), resource, lr, "integrity_mismatch", errTestIntegrityMismatch, FailureModeStrict, "default"); err != nil {
 		t.Fatalf("store: %v", err)
 	}
 	if len(storage.data) != 1 {
@@ -101,7 +101,7 @@ func TestDeadLetterPartitionByStream(t *testing.T) {
 	lr.Attributes().PutStr(auditAttrRecordID, "rec-1")
 	lr.Attributes().PutStr(auditAttrSourceID, "stream-1")
 
-	if err := dlq.store(context.Background(), resource, lr, "integrity_mismatch", errTestIntegrityMismatch, FailureModeStrict, "default"); err != nil {
+	if _, err := dlq.store(context.Background(), resource, lr, "integrity_mismatch", errTestIntegrityMismatch, FailureModeStrict, "default"); err != nil {
 		t.Fatalf("store: %v", err)
 	}
 	found := false
