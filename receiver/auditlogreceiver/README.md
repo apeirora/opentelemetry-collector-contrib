@@ -86,6 +86,36 @@ Clients must send **signed OTLP audit logs** from the Go SDK (`sdk/auditlog`), n
 
 Reference sync config: `example-config.yaml`.
 
+### Receiver settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `endpoint` | `0.0.0.0:4310` | Listen address (`confighttp` / `net.addr.endpoint`). Required; empty endpoint fails validation. |
+| `path` | `/v1/audit` | HTTP path for OTLP audit ingest |
+| `response_mode` | `sync` | Only `sync` is supported (`async` is rejected). Blocks until pipeline delivery finishes; returns 200 / 400 / 503 (or 202 when circuit `open_behavior: accept`). |
+| `storage` | — | **Required.** Storage extension ID used as the sync WAL (`pending/` keys) for crash recovery |
+| `tls` | — | Optional TLS / mTLS via `confighttp` `tls` (`cert_file`, `key_file`, `client_ca_file`, `min_version`, …). When set, transport is `https`. |
+| `read_header_timeout` | `20s` when unset | Applied at server start if the HTTP server field is zero (see `confighttp.ServerConfig`) |
+
+Other HTTP server fields from `confighttp.ServerConfig` (CORS, auth, timeouts, etc.) are available when needed; see collector `confighttp` docs.
+
+### Circuit breaker (`circuit_breaker`)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `circuit_breaker.enabled` | `true` | When true, consecutive pipeline failures open the breaker |
+| `circuit_breaker.circuit_open_threshold` | `5` | Failures required to open the circuit |
+| `circuit_breaker.circuit_open_duration` | `1m` | How long the circuit stays open before half-open |
+| `circuit_breaker.open_behavior` | `reject` | Sync ingest while open: `reject` → HTTP **503**, no WAL; `accept` → WAL + HTTP **202**, replayed by the recovery ticker when the circuit allows processing |
+
+### Not configurable
+
+| Behavior | Value | Notes |
+|----------|-------|-------|
+| WAL recovery ticker interval | `5s` | Hardcoded (`defaultRecoveryInterval`); runs `recoverSyncPending` in the background |
+
+### Example
+
 ```yaml
 receivers:
   auditlogreceiver:
@@ -99,6 +129,8 @@ receivers:
       client_ca_file: /etc/otel/tls/ca.crt
     circuit_breaker:
       enabled: true
+      circuit_open_threshold: 5
+      circuit_open_duration: 1m
       open_behavior: reject
 
 processors:
