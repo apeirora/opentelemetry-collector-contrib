@@ -4,6 +4,7 @@
 package signingprocessor
 
 import (
+	"bytes"
 	"context"
 	"testing"
 
@@ -36,7 +37,7 @@ func TestFetchSecretDataWithClientHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if string(data) != string(certPEM) {
+	if !bytes.Equal(data, certPEM) {
 		t.Error("returned data does not match expected cert PEM")
 	}
 }

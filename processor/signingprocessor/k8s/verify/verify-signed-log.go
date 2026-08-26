@@ -68,23 +68,26 @@ func main() {
 		os.Exit(1)
 	}
 
-	var logReader io.Reader
+	var logData []byte
 	if *logFile == "-" {
-		logReader = os.Stdin
+		var err error
+		logData, err = io.ReadAll(os.Stdin)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading log data: %v\n", err)
+			os.Exit(1)
+		}
 	} else {
 		file, err := os.Open(*logFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error opening log file: %v\n", err)
 			os.Exit(1)
 		}
-		defer file.Close()
-		logReader = file
-	}
-
-	logData, err := io.ReadAll(logReader)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading log data: %v\n", err)
-		os.Exit(1)
+		logData, err = io.ReadAll(file)
+		file.Close()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading log data: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	logRecords, err := parseLogRecords(logData)
