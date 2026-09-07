@@ -1,0 +1,14 @@
+.git
+.github
+bin/
+**/testdata/**
+*.md
+logs.txt
+test-logs.txt
+test.pfx
+test-standalone/
+storage/
+processor/certificatehashprocessor/k8s/tmp-certs/
+processor/certificatelogverifyprocessor/k8s/certificates/key.pem
+receiver/auditlogreceiver/testdata/tls/
+processor/certificatelogverifyprocessor/k8s/certificates/key.pem
