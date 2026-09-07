@@ -1,0 +1,504 @@
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
+
+package auditlogreceiver
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"go.opentelemetry.io/collector/consumer"
+	"go.opentelemetry.io/collector/consumer/consumererror"
+	"go.opentelemetry.io/collector/pdata/plog"
+	"go.opentelemetry.io/collector/pdata/plog/plogotlp"
+)
+
+type fanOutLogsConsumer struct {
+	sinks []consumer.Logs
+}
+
+func newFanOutLogsConsumer(sinks ...consumer.Logs) consumer.Logs {
+	return &fanOutLogsConsumer{sinks: sinks}
+}
+
+func (f *fanOutLogsConsumer) ConsumeLogs(ctx context.Context, ld plog.Logs) error {
+	var joined error
+	for _, sink := range f.sinks {
+		batch := plog.NewLogs()
+		ld.CopyTo(batch)
+		if err := sink.ConsumeLogs(ctx, batch); err != nil {
+			joined = errors.Join(joined, err)
+		}
+	}
+	return joined
+}
+
+func (*fanOutLogsConsumer) Capabilities() consumer.Capabilities {
+	return consumer.Capabilities{}
+}
+
+func testOTLPBatchRequest(t *testing.T, recordCount int, asJSON bool) []byte {
+	t.Helper()
+	logs := plog.NewLogs()
+	rl := logs.ResourceLogs().AppendEmpty()
+	sl := rl.ScopeLogs().AppendEmpty()
+	for i := 0; i < recordCount; i++ {
+		lr := sl.LogRecords().AppendEmpty()
+		lr.Body().SetStr(fmt.Sprintf("audit-record-%d", i))
+		lr.SetSeverityNumber(plog.SeverityNumberInfo)
+	}
+	otlpReq := plogotlp.NewExportRequestFromLogs(logs)
+	if asJSON {
+		data, err := otlpReq.MarshalJSON()
+		if err != nil {
+			t.Fatalf("marshal json: %v", err)
+		}
+		return data
+	}
+	data, err := otlpReq.MarshalProto()
+	if err != nil {
+		t.Fatalf("marshal proto: %v", err)
+	}
+	return data
+}
+
+func postSyncOTLP(t *testing.T, r *auditLogReceiver, body []byte, contentType string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, defaultPath, bytes.NewReader(body))
+	req.Header.Set("Content-Type", contentType)
+	w := httptest.NewRecorder()
+	r.handleAuditLogs(w, req)
+	return w
+}
+
+func TestSyncMultiRecordOTLPBatchProtobuf(t *testing.T) {
+	t.Parallel()
+	sink := &mockConsumer{}
+	r := newTestReceiver(t, testSyncConfig(), sink, true)
+
+	body := testOTLPBatchRequest(t, 5, false)
+	w := postSyncOTLP(t, r, body, "application/x-protobuf")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	if len(sink.logs) != 5 {
+		t.Fatalf("expected 5 per-record consume calls, got %d", len(sink.logs))
+	}
+	for i, batch := range sink.logs {
+		if batch.LogRecordCount() != 1 {
+			t.Fatalf("batch %d: expected 1 record, got %d", i, batch.LogRecordCount())
+		}
+	}
+}
+
+func TestSyncMultiRecordOTLPBatchJSON(t *testing.T) {
+	t.Parallel()
+	sink := &mockConsumer{}
+	r := newTestReceiver(t, testSyncConfig(), sink, true)
+
+	body := testOTLPBatchRequest(t, 3, true)
+	w := postSyncOTLP(t, r, body, "application/json")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	if len(sink.logs) != 3 {
+		t.Fatalf("expected 3 per-record consume calls, got %d", len(sink.logs))
+	}
+}
+
+func TestSyncFanOutAllSinksSuccess(t *testing.T) {
+	t.Parallel()
+	sinkA := &mockConsumer{}
+	sinkB := &mockConsumer{}
+	sinkC := &mockConsumer{}
+	r := newTestReceiver(t, testSyncConfig(), newFanOutLogsConsumer(sinkA, sinkB, sinkC), true)
+
+	w := postSyncOTLP(t, r, testOTLPBatchRequest(t, 2, false), "application/x-protobuf")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	for i, sink := range []*mockConsumer{sinkA, sinkB, sinkC} {
+		if len(sink.logs) != 2 {
+			t.Fatalf("sink %d: expected 2 per-record consume calls, got %d", i, len(sink.logs))
+		}
+		for j, batch := range sink.logs {
+			if batch.LogRecordCount() != 1 {
+				t.Fatalf("sink %d batch %d: expected 1 record, got %d", i, j, batch.LogRecordCount())
+			}
+		}
+	}
+}
+
+func TestSyncFanOutOneSinkFailsReturnsError(t *testing.T) {
+	t.Parallel()
+	sinkA := &mockConsumer{}
+	sinkB := &mockConsumer{err: errors.New("sink B unavailable")}
+	sinkC := &mockConsumer{}
+	r := newTestReceiver(t, testSyncConfig(), newFanOutLogsConsumer(sinkA, sinkB, sinkC), true)
+
+	w := postSyncOTLP(t, r, testOTLPRequest(t), "application/x-protobuf")
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d body=%s", w.Code, w.Body.String())
+	}
+	if len(sinkA.logs) != 1 {
+		t.Fatalf("sink A should have received data before fan-out error, got %d batches", len(sinkA.logs))
+	}
+	if len(sinkC.logs) != 1 {
+		t.Fatalf("sink C is still invoked in fan-out, got %d batches", len(sinkC.logs))
+	}
+
+	keys, err := r.getPendingKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("expected WAL entry retained after transient failure, got %d keys", len(keys))
+	}
+}
+
+func TestSyncFanOutRetryDuplicatesSuccessfulSink(t *testing.T) {
+	t.Parallel()
+	sinkA := &mockConsumer{}
+	flakyB := &mockConsumer{err: errors.New("sink B down")}
+	r := newTestReceiver(t, testSyncConfig(), newFanOutLogsConsumer(sinkA, flakyB), true)
+
+	w1 := postSyncOTLP(t, r, testOTLPRequest(t), "application/x-protobuf")
+	if w1.Code != http.StatusServiceUnavailable {
+		t.Fatalf("first attempt: expected 503, got %d", w1.Code)
+	}
+
+	flakyB.err = nil
+	w2 := postSyncOTLP(t, r, testOTLPRequest(t), "application/x-protobuf")
+	if w2.Code != http.StatusOK {
+		t.Fatalf("second attempt: expected 200, got %d", w2.Code)
+	}
+	if len(sinkA.logs) != 2 {
+		t.Fatalf("sink A received duplicate delivery on client retry, got %d batches", len(sinkA.logs))
+	}
+	if len(flakyB.logs) != 1 {
+		t.Fatalf("sink B only receives data once flaky sink recovers, got %d batches", len(flakyB.logs))
+	}
+}
+
+type selectiveFailConsumer struct {
+	failBodies map[string]error
+	logs       []plog.Logs
+}
+
+func (m *selectiveFailConsumer) ConsumeLogs(_ context.Context, logs plog.Logs) error {
+	body := ""
+	for i := 0; i < logs.ResourceLogs().Len(); i++ {
+		rl := logs.ResourceLogs().At(i)
+		for j := 0; j < rl.ScopeLogs().Len(); j++ {
+			sl := rl.ScopeLogs().At(j)
+			for k := 0; k < sl.LogRecords().Len(); k++ {
+				body = sl.LogRecords().At(k).Body().AsString()
+			}
+		}
+	}
+	if err, ok := m.failBodies[body]; ok {
+		return err
+	}
+	copied := plog.NewLogs()
+	logs.CopyTo(copied)
+	m.logs = append(m.logs, copied)
+	return nil
+}
+
+func (*selectiveFailConsumer) Capabilities() consumer.Capabilities {
+	return consumer.Capabilities{}
+}
+
+func testOTLPBatchRequestWithIDs(t *testing.T, ids []string, asJSON bool) []byte {
+	t.Helper()
+	logs := plog.NewLogs()
+	rl := logs.ResourceLogs().AppendEmpty()
+	sl := rl.ScopeLogs().AppendEmpty()
+	for _, id := range ids {
+		lr := sl.LogRecords().AppendEmpty()
+		lr.Body().SetStr(id)
+		lr.SetSeverityNumber(plog.SeverityNumberInfo)
+		lr.Attributes().PutStr(auditAttrRecordID, id)
+	}
+	otlpReq := plogotlp.NewExportRequestFromLogs(logs)
+	if asJSON {
+		data, err := otlpReq.MarshalJSON()
+		if err != nil {
+			t.Fatalf("marshal json: %v", err)
+		}
+		return data
+	}
+	data, err := otlpReq.MarshalProto()
+	if err != nil {
+		t.Fatalf("marshal proto: %v", err)
+	}
+	return data
+}
+
+func TestSyncPartialBatchRejectsOnlyFailedRecords(t *testing.T) {
+	t.Parallel()
+	sink := &selectiveFailConsumer{
+		failBodies: map[string]error{
+			"bad-record": consumererror.NewPermanent(errors.New("rejected_verify_failed: integrity mismatch")),
+		},
+	}
+	r := newTestReceiver(t, testSyncConfig(), sink, true)
+
+	body := testOTLPBatchRequestWithIDs(t, []string{"good-record", "bad-record", "good-record-2"}, false)
+	w := postSyncOTLP(t, r, body, "application/x-protobuf")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 partial success, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	resp := plogotlp.NewExportResponse()
+	if err := resp.UnmarshalProto(w.Body.Bytes()); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	partial := resp.PartialSuccess()
+	if partial.RejectedLogRecords() != 1 {
+		t.Fatalf("expected 1 rejected record, got %d", partial.RejectedLogRecords())
+	}
+	if !strings.Contains(partial.ErrorMessage(), "bad-record") {
+		t.Fatalf("expected failed id in partial success message, got %q", partial.ErrorMessage())
+	}
+	if len(sink.logs) != 2 {
+		t.Fatalf("expected 2 accepted deliveries, got %d", len(sink.logs))
+	}
+
+	keys, err := r.getPendingKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("partial success should clear WAL, got %d keys", len(keys))
+	}
+}
+
+func TestSyncPartialBatchJSONResponse(t *testing.T) {
+	t.Parallel()
+	sink := &selectiveFailConsumer{
+		failBodies: map[string]error{
+			"bad-record": consumererror.NewPermanent(errors.New("rejected_verify_failed: bad cert")),
+		},
+	}
+	r := newTestReceiver(t, testSyncConfig(), sink, true)
+
+	body := testOTLPBatchRequestWithIDs(t, []string{"good-record", "bad-record"}, true)
+	w := postSyncOTLP(t, r, body, "application/json")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	resp := plogotlp.NewExportResponse()
+	if err := resp.UnmarshalJSON(w.Body.Bytes()); err != nil {
+		t.Fatalf("unmarshal json response: %v", err)
+	}
+	partial := resp.PartialSuccess()
+	if partial.RejectedLogRecords() != 1 {
+		t.Fatalf("expected 1 rejected record, got %d", partial.RejectedLogRecords())
+	}
+	if !strings.Contains(partial.ErrorMessage(), "bad-record") {
+		t.Fatalf("expected failed id in error message, got %q", partial.ErrorMessage())
+	}
+	if len(sink.logs) != 1 {
+		t.Fatalf("expected 1 accepted delivery, got %d", len(sink.logs))
+	}
+}
+
+func TestSyncPermanentFailureClearsWAL(t *testing.T) {
+	t.Parallel()
+	sink := &mockConsumer{
+		err: consumererror.NewPermanent(errors.New("rejected_verify_failed: integrity mismatch")),
+	}
+	r := newTestReceiver(t, testSyncConfig(), sink, true)
+
+	w := postSyncOTLP(t, r, testOTLPRequest(t), "application/x-protobuf")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", w.Code, w.Body.String())
+	}
+	keys, err := r.getPendingKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("permanent failure should not retain WAL entry, got %d keys", len(keys))
+	}
+}
+
+func TestSyncRecoverPendingAfterCrash(t *testing.T) {
+	t.Parallel()
+	sink := &mockConsumer{err: errors.New("pipeline down")}
+	r := newTestReceiver(t, testSyncConfig(), sink, true)
+
+	w := postSyncOTLP(t, r, testOTLPRequest(t), "application/x-protobuf")
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", w.Code)
+	}
+	keys, err := r.getPendingKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 pending WAL entry, got %d", len(keys))
+	}
+
+	sink.err = nil
+	r.recoverSyncPending()
+
+	if len(sink.logs) != 1 {
+		t.Fatalf("expected recovery delivery, got %d batches", len(sink.logs))
+	}
+	keys, err = r.getPendingKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("expected WAL drained after recovery, got %d keys", len(keys))
+	}
+}
+
+func TestSyncCircuitBreakerOpenReturns503(t *testing.T) {
+	t.Parallel()
+	cfg := testSyncConfig()
+	enabled := true
+	cfg.CircuitBreaker.Enabled = &enabled
+	cfg.CircuitBreaker.CircuitOpenThreshold = 1
+
+	sink := &mockConsumer{}
+	r := newTestReceiver(t, cfg, sink, true)
+	r.circuitBreaker.RecordFailure()
+
+	w := postSyncOTLP(t, r, testOTLPRequest(t), "application/x-protobuf")
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("circuit open: expected 503, got %d body=%s", w.Code, w.Body.String())
+	}
+	if len(sink.logs) != 0 {
+		t.Fatalf("circuit open must block delivery, consumer got %d batches", len(sink.logs))
+	}
+	keys, err := r.getPendingKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("circuit open reject must not write WAL, got %d keys", len(keys))
+	}
+}
+
+func TestSyncCircuitBreakerOpenAcceptReturns202(t *testing.T) {
+	t.Parallel()
+	cfg := testSyncConfig()
+	enabled := true
+	cfg.CircuitBreaker.Enabled = &enabled
+	cfg.CircuitBreaker.CircuitOpenThreshold = 1
+	cfg.CircuitBreaker.OpenBehavior = CircuitOpenAccept
+
+	sink := &mockConsumer{}
+	r := newTestReceiver(t, cfg, sink, true)
+	r.circuitBreaker.RecordFailure()
+
+	w := postSyncOTLP(t, r, testOTLPRequest(t), "application/x-protobuf")
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("circuit open accept: expected 202, got %d body=%s", w.Code, w.Body.String())
+	}
+	if len(sink.logs) != 0 {
+		t.Fatalf("circuit open accept must defer delivery, consumer got %d batches", len(sink.logs))
+	}
+	keys, err := r.getPendingKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("circuit open accept must write WAL, got %d keys", len(keys))
+	}
+}
+
+func TestSyncCircuitBreakerOpenAcceptRecoversWhenCircuitCloses(t *testing.T) {
+	t.Parallel()
+	cfg := testSyncConfig()
+	enabled := true
+	cfg.CircuitBreaker.Enabled = &enabled
+	cfg.CircuitBreaker.CircuitOpenThreshold = 1
+	cfg.CircuitBreaker.CircuitOpenDuration = time.Millisecond
+	cfg.CircuitBreaker.OpenBehavior = CircuitOpenAccept
+
+	sink := &mockConsumer{}
+	r := newTestReceiver(t, cfg, sink, true)
+	r.circuitBreaker.RecordFailure()
+
+	w := postSyncOTLP(t, r, testOTLPRequest(t), "application/x-protobuf")
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("circuit open accept: expected 202, got %d", w.Code)
+	}
+
+	time.Sleep(2 * time.Millisecond)
+	r.recoverSyncPending()
+
+	if len(sink.logs) != 1 {
+		t.Fatalf("expected recovery after circuit half-open, got %d batches", len(sink.logs))
+	}
+	keys, err := r.getPendingKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("expected WAL drained after recovery, got %d keys", len(keys))
+	}
+}
+
+func TestHandleOTLPJSONContentTypeWithCharset(t *testing.T) {
+	t.Parallel()
+	sink := &mockConsumer{}
+	r := newTestReceiver(t, testSyncConfig(), sink, true)
+
+	body := testOTLPBatchRequest(t, 1, true)
+	w := postSyncOTLP(t, r, body, "application/json; charset=utf-8")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for json with charset, got %d body=%s", w.Code, w.Body.String())
+	}
+	if len(sink.logs) != 1 {
+		t.Fatalf("expected 1 consumed batch, got %d", len(sink.logs))
+	}
+}
+
+func TestSyncRecoverCorruptWALMovesToDeadLetter(t *testing.T) {
+	t.Parallel()
+	sink := &mockConsumer{}
+	r := newTestReceiver(t, testSyncConfig(), sink, true)
+
+	corruptKey := pendingKeyPrefix + "bad-id"
+	if err := r.storePendingEntry(corruptKey, []byte(`{not-json`)); err != nil {
+		t.Fatal(err)
+	}
+
+	r.recoverSyncPending()
+
+	if len(sink.logs) != 0 {
+		t.Fatalf("corrupt WAL must not deliver to pipeline, got %d batches", len(sink.logs))
+	}
+	keys, err := r.getPendingKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("corrupt WAL pending key should be removed, got %d keys", len(keys))
+	}
+	dlKey := deadLetterKeyPrefix + "corrupt_bad-id"
+	dlData, err := r.storage.Get(context.Background(), dlKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dlData == nil {
+		t.Fatalf("expected dead letter at %s", dlKey)
+	}
+}
