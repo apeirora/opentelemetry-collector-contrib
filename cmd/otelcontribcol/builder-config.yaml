@@ -117,6 +117,7 @@ processors:
   - gomod: go.opentelemetry.io/collector/processor/batchprocessor v0.160.1-0.20260903163450-cc4b33fc673f
   - gomod: go.opentelemetry.io/collector/processor/memorylimiterprocessor v0.160.1-0.20260903163450-cc4b33fc673f
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/attributesprocessor v0.160.0
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/certificatelogverifyprocessor v0.151.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/cardinalityguardianprocessor v0.160.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/cumulativetodeltaprocessor v0.160.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/coralogixprocessor v0.160.0
