@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -25,6 +26,8 @@ type redisStorage struct {
 // Ensure this storage extension implements the appropriate interface
 var _ storage.Extension = (*redisStorage)(nil)
 
+var newRedisClient = redis.NewClient
+
 func newRedisStorage(logger *zap.Logger, config *Config) (extension.Extension, error) {
 	return &redisStorage{
 		cfg:    config,
@@ -38,14 +41,49 @@ func (rs *redisStorage) Start(ctx context.Context, _ component.Host) error {
 	if err != nil {
 		return err
 	}
-	c := redis.NewClient(&redis.Options{
-		Addr:      rs.cfg.Endpoint,
-		Password:  string(rs.cfg.Password),
-		DB:        rs.cfg.DB,
-		TLSConfig: tlsConfig,
-	})
-	rs.client = c
-	return nil
+
+	var lastErr error
+
+	for attempt := 0; attempt < rs.cfg.MaxRetries; attempt++ {
+		dialer := &net.Dialer{
+			Timeout: rs.cfg.DialTimeout,
+		}
+
+		c := newRedisClient(&redis.Options{
+			Addr:            rs.cfg.Endpoint,
+			Password:        string(rs.cfg.Password),
+			DB:              rs.cfg.DB,
+			TLSConfig:       tlsConfig,
+			Dialer:          dialer.DialContext,
+			DialTimeout:     rs.cfg.DialTimeout,
+			ReadTimeout:     rs.cfg.ReadTimeout,
+			WriteTimeout:    rs.cfg.WriteTimeout,
+			PoolTimeout:     rs.cfg.PoolTimeout,
+			MaxRetries:      0,
+			MinRetryBackoff: rs.cfg.MinRetryBackoff,
+			MaxRetryBackoff: rs.cfg.MaxRetryBackoff,
+		})
+
+		pingCtx, cancel := context.WithTimeout(ctx, rs.cfg.PingTimeout)
+		err := c.Ping(pingCtx).Err()
+		cancel()
+
+		if err == nil {
+			rs.client = c
+			rs.logger.Info("Successfully connected to Redis", zap.String("endpoint", rs.cfg.Endpoint))
+			return nil
+		}
+
+		c.Close()
+		lastErr = err
+
+		if attempt < rs.cfg.MaxRetries-1 {
+			rs.logger.Info("Redis connection attempt failed, retrying...", zap.String("endpoint", rs.cfg.Endpoint), zap.Int("attempt", attempt+1), zap.Error(err))
+			time.Sleep(rs.cfg.RetryDelay)
+		}
+	}
+
+	return fmt.Errorf("failed to connect to Redis at %s after %d attempts: %w", rs.cfg.Endpoint, rs.cfg.MaxRetries, lastErr)
 }
 
 // Shutdown will close any open databases
