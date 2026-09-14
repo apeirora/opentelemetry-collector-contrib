@@ -35,16 +35,16 @@ func TestLoadConfig(t *testing.T) {
 		},
 		{
 			id: component.NewIDWithName(metadata.Type, "all_settings"),
-			expected: &Config{
-				Endpoint:   "localhost:1234",
-				Password:   "passwd",
-				DB:         1,
-				Expiration: 3 * time.Hour,
-				Prefix:     "test_",
-				TLS: configtls.ClientConfig{
-					Insecure: true,
-				},
-			},
+			expected: func() component.Config {
+				cfg := createDefaultConfig().(*Config)
+				cfg.Endpoint = "localhost:1234"
+				cfg.Password = "passwd"
+				cfg.DB = 1
+				cfg.Expiration = 3 * time.Hour
+				cfg.Prefix = "test_"
+				cfg.TLS = configtls.ClientConfig{Insecure: true}
+				return cfg
+			}(),
 		},
 	}
 	for _, tt := range tests {
