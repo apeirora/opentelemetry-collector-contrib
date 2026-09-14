@@ -1,1 +1,1 @@
-testapp-dev-hmac-key-change-in-production
+dGVzdGFwcC1kZXYtaG1hYy1rZXktY2hhbmdlLWluLXByb2R1Y3Rpb24=

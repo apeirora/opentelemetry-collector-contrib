@@ -79,6 +79,24 @@ func TestDecodeIntegrityValue(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestDecodeHMACKeyMaterial(t *testing.T) {
+	t.Parallel()
+	raw := []byte("testapp-dev-hmac-key-change-in-production")
+	encoded := base64.StdEncoding.EncodeToString(raw)
+
+	got, err := decodeHMACKeyMaterial([]byte(encoded+"\n"), "test source")
+	require.NoError(t, err)
+	assert.Equal(t, raw, got)
+
+	_, err = decodeHMACKeyMaterial([]byte("not-base64!!!"), "test source")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "standard base64-encoded")
+
+	_, err = decodeHMACKeyMaterial([]byte("   "), "test source")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty")
+}
+
 func TestVerifyIntegrityHMACSHA256_HexFallback(t *testing.T) {
 	t.Parallel()
 	key := []byte("testapp-dev-hmac-key-change-in-production")

@@ -42,11 +42,11 @@ func loadHMACKey(cfg *Config) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to read hmac_key_file %q: %w", cfg.HmacKeyFile, err)
 		}
-		key := strings.TrimSpace(string(data))
-		if key == "" {
-			return nil, fmt.Errorf("hmac_key_file %q is empty", cfg.HmacKeyFile)
+		key, err := decodeHMACKeyMaterial(data, fmt.Sprintf("hmac_key_file %q", cfg.HmacKeyFile))
+		if err != nil {
+			return nil, err
 		}
-		return []byte(key), nil
+		return key, nil
 	}
 
 	if cfg.K8sSecret == nil {
@@ -60,11 +60,26 @@ func loadHMACKey(cfg *Config) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load hmac key from k8s secret: %w", err)
 	}
-	key := strings.TrimSpace(string(data))
-	if key == "" {
-		return nil, fmt.Errorf("hmac key in k8s secret is empty")
+	key, err := decodeHMACKeyMaterial(data, "hmac key in k8s secret")
+	if err != nil {
+		return nil, err
 	}
-	return []byte(key), nil
+	return key, nil
+}
+
+func decodeHMACKeyMaterial(data []byte, source string) ([]byte, error) {
+	encoded := strings.TrimSpace(string(data))
+	if encoded == "" {
+		return nil, fmt.Errorf("%s is empty", source)
+	}
+	key, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("%s: content must be standard base64-encoded: %w", source, err)
+	}
+	if len(key) == 0 {
+		return nil, fmt.Errorf("%s is empty after base64 decoding", source)
+	}
+	return key, nil
 }
 
 func (p *verifyProcessor) verifyAuditLogRecord(resource pcommon.Resource, lr plog.LogRecord) (string, error) {

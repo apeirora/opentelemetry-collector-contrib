@@ -170,7 +170,7 @@ Component type: `certificatelogverify`.
 | `mode` | `sync` | Only `sync` is supported; verifies each record (`deferred` is rejected) |
 | `failure_mode` | `strict` | `strict` drops failed records and fails the pipeline; `mark` annotates failures and continues |
 | `verification_profile` | `default` | Label written to `verification_profile` on each record; does not change verification logic |
-| `hmac_key_file` | — | Path to HMAC key file (required in `sync` mode unless cert or k8s key is set) |
+| `hmac_key_file` | — | Path to HMAC key file; content must be **standard base64-encoded** (required in `sync` mode unless cert or k8s key is set) |
 | `cert_file` | — | Path to PEM certificate for RSA/ECDSA verification |
 | `hash_chain.enabled` | `false` | Enable sequence and previous-hash chain validation |
 | `hash_chain.storage` | — | Storage extension ID (required when `hash_chain.enabled` is true) |
@@ -239,7 +239,7 @@ Use `dead_letter.reasons` to filter which failures are stored. When omitted or e
 |---------|---------|-------------|
 | `k8s_secret.name` | — | Secret name (required when using k8s) |
 | `k8s_secret.namespace` | `default` | Secret namespace |
-| `k8s_secret.hmac_key_entry` | — | Secret key containing the HMAC key |
+| `k8s_secret.hmac_key_entry` | — | Secret key containing the HMAC key (value must be **standard base64-encoded**) |
 | `k8s_secret.cert_key` | — | Secret key containing the certificate PEM |
 
 In `sync` mode, at least one key source must be configured: `hmac_key_file`, `cert_file`, or `k8s_secret` with `hmac_key_entry` and/or `cert_key`.
@@ -356,7 +356,7 @@ Coordinate SDK and collector rotation: if apps sign with a new key before collec
 ## How It Works
 
 1. **Key loading**: On startup in `sync` mode only — see [Key and certificate loading](#key-and-certificate-loading). No periodic reload.
-2. **Canonicalization**: Builds the same RFC 8785 / JCS payload as `signingprocessor` over `event_name`, string `body`, `timestamp` / `observed_timestamp` (Unix nano), `severity_*`, `trace_id` / `span_id`, and typed attributes (excluding `audit.integrity.*` and processor outcome attrs). See [Canonical attribute encoding](#canonical-attribute-encoding).
+2. **Canonicalization**: Builds the same RFC 8785 / JCS payload as `signingprocessor` over `event_name`, typed `body`, `timestamp` / `observed_timestamp` (Unix nano as decimal strings), `trace_id` / `span_id`, and type-tagged attributes (excluding `audit.integrity.*`, severity/flags, and processor outcome attrs). See [Canonical attribute encoding](#canonical-attribute-encoding).
 3. **Integrity verification**: Reads `audit.integrity.algorithm` (and optional `audit.integrity.certificate`) from the resource and `audit.integrity.value` from the record, then verifies HMAC or signature against the canonical payload.
 4. **Hash chain** (optional): When enabled, validates `audit.prev.hash` and `audit.sequence.number` per `audit.source.id` stream using configured storage.
 5. **Outcome attributes**: Sets `verify_status`, `verify_reason`, `tier2_status`, `verification_profile`, and related fields on each record.
@@ -371,14 +371,22 @@ Canonicalization matches `signingprocessor` (`serializeLogRecord` / `valueToInte
 
 | Field | Encoding |
 |-------|----------|
-| `event_name`, `severity_text`, `trace_id`, `span_id` | strings when set |
-| `body` | string body only; invalid UTF-8 is rejected |
-| `timestamp`, `observed_timestamp` | Unix nanoseconds |
-| `severity_number` | numeric when non-zero |
-| `attributes` | JSON object map (not an array); nested maps/slices preserved with depth cap 128 |
-| bytes attributes | standard base64 |
+| `event_name`, `trace_id`, `span_id` | strings when set |
+| `body` | any non-empty OTLP value via type-tagged encoding below; invalid UTF-8 is rejected |
+| `timestamp`, `observed_timestamp` | Unix nanoseconds as **decimal strings** (full int64 range) |
+| `attributes` | JSON object map; each scalar wrapped in a type tag (depth cap 128) |
 
-`audit.integrity.*` attributes and processor outcome attributes (`verify_status`, …) are excluded from the signed payload.
+| OTLP type | JSON encoding |
+|-----------|---------------|
+| `string` | `{"stringValue": <string>}` |
+| `int` | `{"intValue": "<decimal>"}` |
+| `double` | `{"doubleValue": <number>}` |
+| `bool` | `{"boolValue": <boolean>}` |
+| `bytes` | `{"bytesValue": "<base64>"}` |
+| `slice` / `map` | recursive elements/values |
+
+`SeverityNumber`, `SeverityText`, and `Flags` are not part of the signed payload.
+`audit.integrity.*` attributes and processor outcome attributes (`verify_status`, …) are also excluded.
 
 ## Integrity value encoding
 

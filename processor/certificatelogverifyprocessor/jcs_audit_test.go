@@ -21,11 +21,11 @@ func TestValueToInterfacePrimitives(t *testing.T) {
 		want any
 	}{
 		{name: "empty", set: func() pcommon.Value { return pcommon.NewValueEmpty() }, want: nil},
-		{name: "string", set: func() pcommon.Value { v := pcommon.NewValueStr("hello"); return v }, want: "hello"},
-		{name: "int", set: func() pcommon.Value { v := pcommon.NewValueInt(42); return v }, want: int64(42)},
-		{name: "bool_true", set: func() pcommon.Value { v := pcommon.NewValueBool(true); return v }, want: true},
-		{name: "bool_false", set: func() pcommon.Value { v := pcommon.NewValueBool(false); return v }, want: false},
-		{name: "double", set: func() pcommon.Value { v := pcommon.NewValueDouble(1.5); return v }, want: 1.5},
+		{name: "string", set: func() pcommon.Value { v := pcommon.NewValueStr("hello"); return v }, want: map[string]any{"stringValue": "hello"}},
+		{name: "int", set: func() pcommon.Value { v := pcommon.NewValueInt(42); return v }, want: map[string]any{"intValue": "42"}},
+		{name: "bool_true", set: func() pcommon.Value { v := pcommon.NewValueBool(true); return v }, want: map[string]any{"boolValue": true}},
+		{name: "bool_false", set: func() pcommon.Value { v := pcommon.NewValueBool(false); return v }, want: map[string]any{"boolValue": false}},
+		{name: "double", set: func() pcommon.Value { v := pcommon.NewValueDouble(1.5); return v }, want: map[string]any{"doubleValue": 1.5}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -58,14 +58,19 @@ func TestSerializeLogRecordMatchesSigningShape(t *testing.T) {
 
 	canonical, err := serializeLogRecord(lr)
 	require.NoError(t, err)
-	assert.Contains(t, string(canonical), `"event_name":"user.login"`)
-	assert.Contains(t, string(canonical), `"severity_number":9`)
-	assert.Contains(t, string(canonical), `"severity_text":"INFO"`)
-	assert.Contains(t, string(canonical), `"custom.count":7`)
-	assert.Contains(t, string(canonical), `"custom.ok":true`)
-	assert.NotContains(t, string(canonical), auditAttrIntegrityVal)
-	assert.NotContains(t, string(canonical), verifyStatusKey)
-	assert.NotContains(t, string(canonical), `"attributes":[`)
+	payload := string(canonical)
+	assert.Contains(t, payload, `"event_name":"user.login"`)
+	assert.Contains(t, payload, `"body":{"stringValue":"{\"event\":\"user.login\"}"}`)
+	assert.Contains(t, payload, `"timestamp":"1779096939611093600"`)
+	assert.Contains(t, payload, `"observed_timestamp":"1779096939611093600"`)
+	assert.Contains(t, payload, `"custom.count":{"intValue":"7"}`)
+	assert.Contains(t, payload, `"custom.ok":{"boolValue":true}`)
+	assert.Contains(t, payload, `"custom.ratio":{"doubleValue":0.25}`)
+	assert.NotContains(t, payload, `"severity_number"`)
+	assert.NotContains(t, payload, `"severity_text"`)
+	assert.NotContains(t, payload, auditAttrIntegrityVal)
+	assert.NotContains(t, payload, verifyStatusKey)
+	assert.NotContains(t, payload, `"attributes":[`)
 }
 
 func TestSerializeLogRecordExcludesOutcomeAttributes(t *testing.T) {
@@ -80,7 +85,7 @@ func TestSerializeLogRecordExcludesOutcomeAttributes(t *testing.T) {
 
 	canonical, err := serializeLogRecord(lr)
 	require.NoError(t, err)
-	assert.Contains(t, string(canonical), `"custom.note":"keep-me"`)
+	assert.Contains(t, string(canonical), `"custom.note":{"stringValue":"keep-me"}`)
 	assert.NotContains(t, string(canonical), verifyStatusKey)
 	assert.NotContains(t, string(canonical), tier2StatusKey)
 	assert.NotContains(t, string(canonical), auditAttrIntegrityVal)
@@ -125,4 +130,26 @@ func TestSerializeLogRecordRejectsDeepNesting(t *testing.T) {
 	_, err := serializeLogRecord(lr)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nesting depth")
+}
+
+func TestSerializeLogRecordMatchesSigningPRCanonicalFixture(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(0, 1779096939611093600)
+	lr := plog.NewLogRecord()
+	lr.SetTimestamp(pcommon.NewTimestampFromTime(now))
+	lr.SetObservedTimestamp(pcommon.NewTimestampFromTime(now))
+	lr.SetEventName("user.login")
+	lr.Body().SetStr(`{"event":"user.login"}`)
+	attrs := lr.Attributes()
+	attrs.PutStr(auditAttrRecordID, "rec-docker-pass")
+	attrs.PutStr(auditAttrActorID, "alice@example.com")
+	attrs.PutStr(auditAttrActorType, "user")
+	attrs.PutStr(auditAttrAction, "login")
+	attrs.PutStr(auditAttrOutcome, "success")
+	attrs.PutStr(auditAttrSourceID, "testapp")
+
+	canonical, err := serializeLogRecord(lr)
+	require.NoError(t, err)
+	want := `{"attributes":{"audit.action":{"stringValue":"login"},"audit.actor.id":{"stringValue":"alice@example.com"},"audit.actor.type":{"stringValue":"user"},"audit.outcome":{"stringValue":"success"},"audit.record.id":{"stringValue":"rec-docker-pass"},"audit.source.id":{"stringValue":"testapp"}},"body":{"stringValue":"{\"event\":\"user.login\"}"},"event_name":"user.login","observed_timestamp":"1779096939611093600","timestamp":"1779096939611093600"}`
+	assert.Equal(t, want, string(canonical))
 }
