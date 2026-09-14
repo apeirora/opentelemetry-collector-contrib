@@ -1,0 +1,54 @@
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
+
+package auditlogreceiver
+
+import (
+	"context"
+
+	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/config/confighttp"
+	"go.opentelemetry.io/collector/config/confignet"
+	"go.opentelemetry.io/collector/consumer"
+	"go.opentelemetry.io/collector/receiver"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/auditlogreceiver/internal/metadata"
+)
+
+const defaultPath = "/v1/audit"
+
+const defaultEndpoint = "0.0.0.0:4310"
+
+func NewFactory() receiver.Factory {
+	return receiver.NewFactory(
+		metadata.Type,
+		createDefaultConfig,
+		receiver.WithLogs(createLogsReceiver, component.StabilityLevelAlpha),
+	)
+}
+
+func createDefaultConfig() component.Config {
+	circuitEnabled := true
+	netAddr := confignet.NewDefaultAddrConfig()
+	netAddr.Transport = confignet.TransportTypeTCP
+	netAddr.Endpoint = defaultEndpoint
+	return &Config{
+		ServerConfig: confighttp.ServerConfig{
+			NetAddr: netAddr,
+		},
+		Path:         defaultPath,
+		ResponseMode: defaultResponseMode,
+		CircuitBreaker: CircuitBreakerConfig{
+			Enabled: &circuitEnabled,
+		},
+	}
+}
+
+func createLogsReceiver(
+	_ context.Context,
+	set receiver.Settings,
+	cfg component.Config,
+	consumer consumer.Logs,
+) (receiver.Logs, error) {
+	return NewReceiver(cfg.(*Config), set, consumer)
+}
