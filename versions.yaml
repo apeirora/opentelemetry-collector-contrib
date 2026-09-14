@@ -205,6 +205,7 @@ module-sets:
       - github.com/open-telemetry/opentelemetry-collector-contrib/processor/adaptivetailsamplingprocessor
       - github.com/open-telemetry/opentelemetry-collector-contrib/processor/attributesprocessor
       - github.com/open-telemetry/opentelemetry-collector-contrib/processor/awsecsattributesprocessor
+      - github.com/open-telemetry/opentelemetry-collector-contrib/processor/certificatelogverifyprocessor
       - github.com/open-telemetry/opentelemetry-collector-contrib/processor/cumulativetodeltaprocessor
       - github.com/open-telemetry/opentelemetry-collector-contrib/processor/coralogixprocessor
       - github.com/open-telemetry/opentelemetry-collector-contrib/processor/deltatocumulativeprocessor
