@@ -12,10 +12,10 @@ import (
 func supportedIntegrityAlgorithms(hmacLoaded, certLoaded bool) []string {
 	var algs []string
 	if hmacLoaded {
-		algs = append(algs, algoHMACSHA256, algoHMACSHA512)
+		algs = append(algs, algoHMACSHA256)
 	}
 	if certLoaded {
-		algs = append(algs, algoECDSAP256SHA256, algoRSAPKCS1SHA256)
+		algs = append(algs, algoRS256, algoRS512, algoES256, algoEdDSA)
 	}
 	return algs
 }
@@ -63,12 +63,12 @@ func logVerificationCapabilities(logger *zap.Logger, hmacLoaded, certLoaded bool
 	)
 	if hmacLoaded && !certLoaded {
 		logger.Warn("Incoming signature algorithms will be rejected until a certificate is configured",
-			zap.Strings("unsupported_algorithms", []string{algoECDSAP256SHA256, algoRSAPKCS1SHA256}),
+			zap.Strings("unsupported_algorithms", []string{algoRS256, algoRS512, algoES256, algoEdDSA}),
 		)
 	}
 	if certLoaded && !hmacLoaded {
 		logger.Warn("Incoming HMAC algorithms will be rejected until an HMAC key is configured",
-			zap.Strings("unsupported_algorithms", []string{algoHMACSHA256, algoHMACSHA512}),
+			zap.Strings("unsupported_algorithms", []string{algoHMACSHA256}),
 		)
 	}
 }

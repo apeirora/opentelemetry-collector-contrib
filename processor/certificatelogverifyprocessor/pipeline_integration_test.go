@@ -7,7 +7,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/hex"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -70,18 +70,18 @@ func buildVerifiedAuditLogs(t *testing.T, recordCount int) plog.Logs {
 		attrs.PutStr(auditAttrOutcome, "success")
 		attrs.PutStr(auditAttrSourceID, "testapp")
 
-		canonical, err := jcsCanonicalAuditRecord(lr)
+		canonical, err := serializeLogRecord(lr)
 		if err != nil {
 			t.Fatalf("canonical: %v", err)
 		}
 		mac := hmac.New(sha256.New, key)
 		_, _ = mac.Write(canonical)
-		attrs.PutStr(auditAttrIntegrityVal, hex.EncodeToString(mac.Sum(nil)))
+		attrs.PutStr(auditAttrIntegrityVal, base64.StdEncoding.EncodeToString(mac.Sum(nil)))
 	}
 	return logs
 }
 
-func newTestProcessorWithFanOut(t *testing.T, sinks ...consumer.Logs) *certificateHashProcessor {
+func newTestProcessorWithFanOut(t *testing.T, sinks ...consumer.Logs) *verifyProcessor {
 	t.Helper()
 	p, err := newProcessor(&Config{
 		Mode:        ModeSync,

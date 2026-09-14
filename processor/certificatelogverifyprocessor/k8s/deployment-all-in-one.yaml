@@ -55,12 +55,13 @@ data:
     
     processors:
       certificatelogverify:
-        hmac_algorithm: SHA256
-        sign_content: attr
+        mode: sync
+        failure_mode: strict
         k8s_secret:
           name: otelcol-test-certs
           namespace: otel-demo
           hmac_key_entry: hmac.key
+          cert_key: tls.crt
     
     exporters:
       debug:

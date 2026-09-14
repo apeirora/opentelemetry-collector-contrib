@@ -16,7 +16,7 @@ import (
 const hashChainKeyPrefix = "hash_chain/"
 
 type hashChainState struct {
-	LastSequence    int64  `json:"last_sequence"`
+	LastSequence      int64  `json:"last_sequence"`
 	LastIntegrityHash string `json:"last_integrity_hash"`
 }
 
@@ -42,10 +42,16 @@ func (s *hashChainStore) validate(streamID string, lr plog.LogRecord) (string, e
 	}
 
 	if found {
-		if prevHash != "" && !strings.EqualFold(prevHash, state.LastIntegrityHash) {
+		if prevHash == "" {
+			return "missing_prev_hash", fmt.Errorf("audit.prev.hash is required after the first record for stream %q", streamID)
+		}
+		if !strings.EqualFold(prevHash, state.LastIntegrityHash) {
 			return "prev_hash_mismatch", fmt.Errorf("audit.prev.hash does not match previous record integrity hash for stream %q", streamID)
 		}
-		if hasSeq && seq <= state.LastSequence {
+		if !hasSeq {
+			return "missing_sequence", fmt.Errorf("audit.sequence.number is required after the first record for stream %q", streamID)
+		}
+		if seq <= state.LastSequence {
 			return "sequence_not_increasing", fmt.Errorf("audit.sequence.number %d must be greater than %d for stream %q", seq, state.LastSequence, streamID)
 		}
 	} else if prevHash != "" {

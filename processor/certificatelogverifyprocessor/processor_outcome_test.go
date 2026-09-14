@@ -7,7 +7,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/hex"
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"testing"
@@ -40,11 +40,11 @@ func buildSignedHMACRecord(t *testing.T, recordID string) plog.Logs {
 	attrs.PutStr(auditAttrOutcome, "success")
 	attrs.PutStr(auditAttrSourceID, "testapp")
 
-	canonical, err := jcsCanonicalAuditRecord(lr)
+	canonical, err := serializeLogRecord(lr)
 	require.NoError(t, err)
 	mac := hmac.New(sha256.New, key)
 	_, _ = mac.Write(canonical)
-	attrs.PutStr(auditAttrIntegrityVal, hex.EncodeToString(mac.Sum(nil)))
+	attrs.PutStr(auditAttrIntegrityVal, base64.StdEncoding.EncodeToString(mac.Sum(nil)))
 
 	logs := plog.NewLogs()
 	rl := logs.ResourceLogs().AppendEmpty()
@@ -72,7 +72,7 @@ func TestDumpSignedOTLPForDocker(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "otlp-invalid.json"), invalidJSON, 0o644))
 }
 
-func newTestProcessor(t *testing.T, cfg *Config) *certificateHashProcessor {
+func newTestProcessor(t *testing.T, cfg *Config) *verifyProcessor {
 	t.Helper()
 	p, err := newProcessor(cfg, consumertest.NewNop(), processortest.NewNopSettings(component.MustNewType("certificatelogverify")))
 	require.NoError(t, err)

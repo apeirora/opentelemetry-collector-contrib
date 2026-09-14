@@ -313,14 +313,15 @@ The following are **not** processor config fields. They are determined by log/re
 - **Integrity algorithm** — read from resource attribute `audit.integrity.algorithm`
 - **Signed content** — fixed JCS canonical form over audit fields, timestamps, body, and non-integrity attributes (see How It Works)
 
-Supported `audit.integrity.algorithm` values:
+Supported `audit.integrity.algorithm` values (JWA identifiers, same as `signingprocessor`):
 
 | Algorithm | Key source required |
 |-----------|---------------------|
 | `HMAC-SHA256` | HMAC key |
-| `HMAC-SHA512` | HMAC key |
-| `ECDSA-P256-SHA256` | Certificate |
-| `RSA-PKCS1-SHA256` | Certificate |
+| `RS256` | Certificate (RSA) |
+| `RS512` | Certificate (RSA) |
+| `ES256` | Certificate (ECDSA P-256) |
+| `EdDSA` | Certificate (Ed25519) |
 
 To update Kubernetes configuration:
 
@@ -355,8 +356,8 @@ Coordinate SDK and collector rotation: if apps sign with a new key before collec
 ## How It Works
 
 1. **Key loading**: On startup in `sync` mode only — see [Key and certificate loading](#key-and-certificate-loading). No periodic reload.
-2. **Canonicalization**: Builds a fixed JCS payload from timestamp, observed timestamp, event name, standard `audit.*` fields, log body, and all attributes except `audit.integrity.*`. See [Canonical attribute encoding](#canonical-attribute-encoding).
-3. **Integrity verification**: Reads `audit.integrity.algorithm` from the resource and `audit.integrity.value` from the record, then verifies HMAC or signature against the canonical payload.
+2. **Canonicalization**: Builds the same RFC 8785 / JCS payload as `signingprocessor` over `event_name`, string `body`, `timestamp` / `observed_timestamp` (Unix nano), `severity_*`, `trace_id` / `span_id`, and typed attributes (excluding `audit.integrity.*` and processor outcome attrs). See [Canonical attribute encoding](#canonical-attribute-encoding).
+3. **Integrity verification**: Reads `audit.integrity.algorithm` (and optional `audit.integrity.certificate`) from the resource and `audit.integrity.value` from the record, then verifies HMAC or signature against the canonical payload.
 4. **Hash chain** (optional): When enabled, validates `audit.prev.hash` and `audit.sequence.number` per `audit.source.id` stream using configured storage.
 5. **Outcome attributes**: Sets `verify_status`, `verify_reason`, `tier2_status`, `verification_profile`, and related fields on each record.
 6. **Dead letter** (optional): When enabled, failed records are serialized to configured storage before pipeline rejection/continuation.
@@ -366,29 +367,31 @@ Coordinate SDK and collector rotation: if apps sign with a new key before collec
 
 ## Canonical attribute encoding
 
-JCS signing includes custom log attributes in an `attributes` array. Each value is converted with `canonicalAttrString` (`jcs_audit.go`) using the same rules as the Go SDK `log.Value.String()` for primitives:
+Canonicalization matches `signingprocessor` (`serializeLogRecord` / `valueToInterface`):
 
-| OTLP type | Canonical string |
-|-----------|------------------|
-| String | as-is |
-| Int | decimal (`strconv.FormatInt`) |
-| Bool | `true` / `false` |
-| Double | `%g` format (`strconv.FormatFloat`) |
+| Field | Encoding |
+|-------|----------|
+| `event_name`, `severity_text`, `trace_id`, `span_id` | strings when set |
+| `body` | string body only; invalid UTF-8 is rejected |
+| `timestamp`, `observed_timestamp` | Unix nanoseconds |
+| `severity_number` | numeric when non-zero |
+| `attributes` | JSON object map (not an array); nested maps/slices preserved with depth cap 128 |
+| bytes attributes | standard base64 |
 
-**Contract (Tier-2):** Prefer **string** attributes for custom signed fields when using `go.opentelemetry.io/otel/sdk/auditlog`. The SDK exports audit fields as strings by default. Int/bool/double are supported when OTLP types match what the signer used; map/slice/bytes encoding is not a supported signing contract — use strings for custom metadata.
-
-`audit.sequence.number` remains a JSON **number** in the canonical payload (not stringified).
+`audit.integrity.*` attributes and processor outcome attributes (`verify_status`, …) are excluded from the signed payload.
 
 ## Integrity value encoding
 
-`audit.integrity.value` holds the HMAC or signature bytes as a string (not part of the JCS signed payload). The processor decodes with `decodeHexOrBase64` (`audit_verify.go`): **hex first**, then **base64**.
+`audit.integrity.value` holds the HMAC or signature bytes as a string (not part of the JCS signed payload). Decoding prefers unambiguous hex (even-length hex-only strings), otherwise **standard base64** (`signingprocessor` default).
 
 | Source | Encoding |
 |--------|----------|
-| Go SDK (`go.opentelemetry.io/otel/sdk/auditlog`) | **Base64** (default) |
-| Processor | Accepts **hex or base64** |
+| `signingprocessor` | **Base64** |
+| This processor | Accepts **base64** (preferred) or hex |
 
-Use **base64** in production to match the SDK. Hex is supported for tests and custom signers. Invalid encoding → `invalid_integrity_encoding`; wrong proof → `integrity_mismatch`.
+Use **base64** in production to match `signingprocessor`. Invalid encoding → `invalid_integrity_encoding`; wrong proof → `integrity_mismatch`.
+
+For asymmetric algorithms, optional resource attribute `audit.integrity.certificate` (`sha256:<hex>` fingerprint or full base64 DER) is checked against the configured verification certificate when present.
 
 ## Post-verify outcome attributes
 
@@ -424,8 +427,9 @@ Use `outcome=passed` vs `outcome=failed` for succeed/fail rates. `reason` is the
 
 | Attribute | Location | Description |
 |-----------|----------|-------------|
-| `audit.integrity.algorithm` | Resource | One of `HMAC-SHA256`, `HMAC-SHA512`, `ECDSA-P256-SHA256`, `RSA-PKCS1-SHA256` |
-| `audit.integrity.value` | Log record | HMAC or signature over the JCS canonical payload; **base64** (SDK default) or hex |
+| `audit.integrity.algorithm` | Resource | One of `HMAC-SHA256`, `RS256`, `RS512`, `ES256`, `EdDSA` |
+| `audit.integrity.value` | Log record | HMAC or signature over the JCS canonical payload; **base64** (`signingprocessor` default) or hex |
+| `audit.integrity.certificate` | Resource | Optional for asymmetric algs: `sha256:<hex>` or full base64 DER; must match configured cert when set |
 
 ### Optional (hash chain)
 

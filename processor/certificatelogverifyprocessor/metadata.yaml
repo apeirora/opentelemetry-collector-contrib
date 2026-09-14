@@ -32,12 +32,16 @@ attributes:
       - unsupported_integrity_algorithm
       - hmac_key_unavailable
       - certificate_unavailable
+      - certificate_key_mismatch
+      - certificate_ref_mismatch
       - invalid_integrity_encoding
       - hmac_compute_failed
       - hash_compute_failed
       - integrity_mismatch
       - missing_stream_id
       - hash_chain_storage_error
+      - missing_prev_hash
+      - missing_sequence
       - prev_hash_mismatch
       - sequence_not_increasing
       - unexpected_prev_hash

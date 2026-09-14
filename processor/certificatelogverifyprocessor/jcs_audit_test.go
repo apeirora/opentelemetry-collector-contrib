@@ -13,79 +13,80 @@ import (
 	"go.opentelemetry.io/collector/pdata/plog"
 )
 
-func TestCanonicalAttrStringPrimitives(t *testing.T) {
+func TestValueToInterfacePrimitives(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
 		set  func() pcommon.Value
-		want string
+		want any
 	}{
-		{name: "empty", set: func() pcommon.Value { return pcommon.NewValueEmpty() }, want: ""},
+		{name: "empty", set: func() pcommon.Value { return pcommon.NewValueEmpty() }, want: nil},
 		{name: "string", set: func() pcommon.Value { v := pcommon.NewValueStr("hello"); return v }, want: "hello"},
-		{name: "int", set: func() pcommon.Value { v := pcommon.NewValueInt(42); return v }, want: "42"},
-		{name: "bool_true", set: func() pcommon.Value { v := pcommon.NewValueBool(true); return v }, want: "true"},
-		{name: "bool_false", set: func() pcommon.Value { v := pcommon.NewValueBool(false); return v }, want: "false"},
-		{name: "double", set: func() pcommon.Value { v := pcommon.NewValueDouble(1.5); return v }, want: "1.5"},
+		{name: "int", set: func() pcommon.Value { v := pcommon.NewValueInt(42); return v }, want: int64(42)},
+		{name: "bool_true", set: func() pcommon.Value { v := pcommon.NewValueBool(true); return v }, want: true},
+		{name: "bool_false", set: func() pcommon.Value { v := pcommon.NewValueBool(false); return v }, want: false},
+		{name: "double", set: func() pcommon.Value { v := pcommon.NewValueDouble(1.5); return v }, want: 1.5},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tt.want, canonicalAttrString(tt.set()))
+			got, err := valueToInterface(tt.set(), 0)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
 
-func TestAttrStringCoercesNonStringAuditFields(t *testing.T) {
-	t.Parallel()
-	lr := plog.NewLogRecord()
-	lr.Attributes().PutInt(auditAttrActorID, 4242)
-
-	assert.Equal(t, "4242", attrString(lr, auditAttrActorID))
-}
-
-func TestJcsCanonicalAuditRecordTypedCustomAttributes(t *testing.T) {
+func TestSerializeLogRecordMatchesSigningShape(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 5, 18, 9, 35, 39, 611093600, time.UTC)
 	lr := plog.NewLogRecord()
 	lr.SetTimestamp(pcommon.NewTimestampFromTime(now))
 	lr.SetObservedTimestamp(pcommon.NewTimestampFromTime(now))
 	lr.SetEventName("user.login")
+	lr.SetSeverityNumber(plog.SeverityNumberInfo)
+	lr.SetSeverityText("INFO")
+	lr.Body().SetStr(`{"event":"user.login"}`)
 	attrs := lr.Attributes()
 	attrs.PutStr(auditAttrRecordID, "rec-typed")
 	attrs.PutStr(auditAttrActorID, "alice@example.com")
-	attrs.PutStr(auditAttrActorType, "user")
-	attrs.PutStr(auditAttrAction, "login")
-	attrs.PutStr(auditAttrOutcome, "success")
 	attrs.PutInt("custom.count", 7)
 	attrs.PutBool("custom.ok", true)
 	attrs.PutDouble("custom.ratio", 0.25)
+	attrs.PutStr(auditAttrIntegrityVal, "ignored")
+	attrs.PutStr(verifyStatusKey, statusPassed)
 
-	collected := collectNonIntegrityAttributes(lr)
-	byKey := make(map[string]string, len(collected))
-	for _, entry := range collected {
-		byKey[entry.Key] = entry.Value
-	}
-	assert.Equal(t, "7", byKey["custom.count"])
-	assert.Equal(t, "true", byKey["custom.ok"])
-	assert.Equal(t, "0.25", byKey["custom.ratio"])
+	canonical, err := serializeLogRecord(lr)
+	require.NoError(t, err)
+	assert.Contains(t, string(canonical), `"event_name":"user.login"`)
+	assert.Contains(t, string(canonical), `"severity_number":9`)
+	assert.Contains(t, string(canonical), `"severity_text":"INFO"`)
+	assert.Contains(t, string(canonical), `"custom.count":7`)
+	assert.Contains(t, string(canonical), `"custom.ok":true`)
+	assert.NotContains(t, string(canonical), auditAttrIntegrityVal)
+	assert.NotContains(t, string(canonical), verifyStatusKey)
+	assert.NotContains(t, string(canonical), `"attributes":[`)
 }
 
-func TestCollectNonIntegrityAttributesExcludesOutcomeAttributes(t *testing.T) {
+func TestSerializeLogRecordExcludesOutcomeAttributes(t *testing.T) {
 	t.Parallel()
 	lr := plog.NewLogRecord()
+	lr.SetEventName("user.login")
 	attrs := lr.Attributes()
 	attrs.PutStr("custom.note", "keep-me")
 	attrs.PutStr(verifyStatusKey, statusPassed)
 	attrs.PutStr(tier2StatusKey, tier2VerifiedQueued)
 	attrs.PutStr(auditAttrIntegrityVal, "ignored-anyway")
 
-	collected := collectNonIntegrityAttributes(lr)
-	require.Len(t, collected, 1)
-	assert.Equal(t, "custom.note", collected[0].Key)
-	assert.Equal(t, "keep-me", collected[0].Value)
+	canonical, err := serializeLogRecord(lr)
+	require.NoError(t, err)
+	assert.Contains(t, string(canonical), `"custom.note":"keep-me"`)
+	assert.NotContains(t, string(canonical), verifyStatusKey)
+	assert.NotContains(t, string(canonical), tier2StatusKey)
+	assert.NotContains(t, string(canonical), auditAttrIntegrityVal)
 }
 
-func TestJcsCanonicalAuditRecordStableForStringAttributes(t *testing.T) {
+func TestSerializeLogRecordStable(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 5, 18, 9, 35, 39, 611093600, time.UTC)
 	lr := plog.NewLogRecord()
@@ -95,14 +96,33 @@ func TestJcsCanonicalAuditRecordStableForStringAttributes(t *testing.T) {
 	attrs := lr.Attributes()
 	attrs.PutStr(auditAttrRecordID, "rec-stable")
 	attrs.PutStr(auditAttrActorID, "alice@example.com")
-	attrs.PutStr(auditAttrActorType, "user")
-	attrs.PutStr(auditAttrAction, "login")
-	attrs.PutStr(auditAttrOutcome, "success")
 	attrs.PutStr("custom.note", "tier2")
 
-	first, err := jcsCanonicalAuditRecord(lr)
+	first, err := serializeLogRecord(lr)
 	require.NoError(t, err)
-	second, err := jcsCanonicalAuditRecord(lr)
+	second, err := serializeLogRecord(lr)
 	require.NoError(t, err)
 	assert.Equal(t, first, second)
+}
+
+func TestSerializeLogRecordRejectsInvalidUTF8(t *testing.T) {
+	t.Parallel()
+	lr := plog.NewLogRecord()
+	lr.Body().SetStr(string([]byte{0xff, 0xfe, 0xfd}))
+	_, err := serializeLogRecord(lr)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid UTF-8")
+}
+
+func TestSerializeLogRecordRejectsDeepNesting(t *testing.T) {
+	t.Parallel()
+	lr := plog.NewLogRecord()
+	cur := lr.Attributes().PutEmptyMap("nest")
+	for i := 0; i < jsonMaxDepth+2; i++ {
+		cur = cur.PutEmptyMap("n")
+	}
+	cur.PutStr("leaf", "x")
+	_, err := serializeLogRecord(lr)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nesting depth")
 }

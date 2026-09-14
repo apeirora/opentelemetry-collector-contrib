@@ -18,10 +18,10 @@ import (
 
 func TestSupportedIntegrityAlgorithms(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, []string{algoHMACSHA256, algoHMACSHA512}, supportedIntegrityAlgorithms(true, false))
-	assert.Equal(t, []string{algoECDSAP256SHA256, algoRSAPKCS1SHA256}, supportedIntegrityAlgorithms(false, true))
+	assert.Equal(t, []string{algoHMACSHA256}, supportedIntegrityAlgorithms(true, false))
+	assert.Equal(t, []string{algoRS256, algoRS512, algoES256, algoEdDSA}, supportedIntegrityAlgorithms(false, true))
 	assert.Equal(t,
-		[]string{algoHMACSHA256, algoHMACSHA512, algoECDSAP256SHA256, algoRSAPKCS1SHA256},
+		[]string{algoHMACSHA256, algoRS256, algoRS512, algoES256, algoEdDSA},
 		supportedIntegrityAlgorithms(true, true),
 	)
 }

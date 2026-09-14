@@ -39,7 +39,8 @@ const (
 	tier2RejectedVerify    = "rejected_verify_failed"
 )
 
-type certificateHashProcessor struct {
+type verifyProcessor struct {
+	id         component.ID
 	config     *Config
 	logger     *zap.Logger
 	nextLogs   consumer.Logs
@@ -50,7 +51,7 @@ type certificateHashProcessor struct {
 	telemetry  *metadata.TelemetryBuilder
 }
 
-func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settings) (*certificateHashProcessor, error) {
+func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settings) (*verifyProcessor, error) {
 	logger := componentLogger(settings.Logger)
 
 	hmacKey, cert, err := loadSyncVerificationKeys(cfg, logger)
@@ -63,7 +64,8 @@ func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settin
 		return nil, fmt.Errorf("failed to create telemetry builder: %w", err)
 	}
 
-	return &certificateHashProcessor{
+	return &verifyProcessor{
+		id:        settings.ID,
 		config:    cfg,
 		logger:    logger,
 		nextLogs:  nextLogs,
@@ -73,7 +75,7 @@ func newProcessor(cfg *Config, nextLogs consumer.Logs, settings processor.Settin
 	}, nil
 }
 
-func (p *certificateHashProcessor) Capabilities() consumer.Capabilities {
+func (p *verifyProcessor) Capabilities() consumer.Capabilities {
 	return consumer.Capabilities{MutatesData: true}
 }
 
@@ -83,7 +85,7 @@ type verifiedRecord struct {
 	lr            plog.LogRecord
 }
 
-func (p *certificateHashProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error {
+func (p *verifyProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error {
 	var verificationErr error
 	var deadLetterErr error
 	verified := make([]verifiedRecord, 0)
@@ -147,7 +149,7 @@ func (p *certificateHashProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs
 	return nil
 }
 
-func (p *certificateHashProcessor) markPassed(ctx context.Context, lr plog.LogRecord) {
+func (p *verifyProcessor) markPassed(ctx context.Context, lr plog.LogRecord) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	attrs := lr.Attributes()
 	attrs.PutStr(verifyStatusKey, statusPassed)
@@ -160,7 +162,7 @@ func (p *certificateHashProcessor) markPassed(ctx context.Context, lr plog.LogRe
 	p.recordVerifyOutcome(ctx, statusPassed, reasonOK)
 }
 
-func (p *certificateHashProcessor) handleVerificationFailure(ctx context.Context, resource pcommon.Resource, lr plog.LogRecord, reason string, err error) error {
+func (p *verifyProcessor) handleVerificationFailure(ctx context.Context, resource pcommon.Resource, lr plog.LogRecord, reason string, err error) error {
 	p.markFailed(lr, reason, err)
 	p.recordVerifyOutcome(ctx, statusFailed, reason)
 	p.logger.Error("Failed to verify audit log record", errString(err))
@@ -185,7 +187,7 @@ func (p *certificateHashProcessor) handleVerificationFailure(ctx context.Context
 	return nil
 }
 
-func (p *certificateHashProcessor) recordVerifyOutcome(ctx context.Context, outcome, reason string) {
+func (p *verifyProcessor) recordVerifyOutcome(ctx context.Context, outcome, reason string) {
 	if p.telemetry == nil {
 		return
 	}
@@ -195,7 +197,7 @@ func (p *certificateHashProcessor) recordVerifyOutcome(ctx context.Context, outc
 	))
 }
 
-func (p *certificateHashProcessor) recordDeadLetter(ctx context.Context, result, reason string) {
+func (p *verifyProcessor) recordDeadLetter(ctx context.Context, result, reason string) {
 	if p.telemetry == nil {
 		return
 	}
@@ -205,7 +207,7 @@ func (p *certificateHashProcessor) recordDeadLetter(ctx context.Context, result,
 	))
 }
 
-func (p *certificateHashProcessor) markFailed(lr plog.LogRecord, reason string, err error) {
+func (p *verifyProcessor) markFailed(lr plog.LogRecord, reason string, err error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	attrs := lr.Attributes()
 	attrs.PutStr(verifyStatusKey, statusFailed)
@@ -218,9 +220,9 @@ func (p *certificateHashProcessor) markFailed(lr plog.LogRecord, reason string, 
 	attrs.PutStr(lastStateChangeAtKey, now)
 }
 
-func (p *certificateHashProcessor) Start(ctx context.Context, host component.Host) error {
+func (p *verifyProcessor) Start(ctx context.Context, host component.Host) error {
 	if p.config.HashChain.Enabled {
-		client, err := getStorageClient(ctx, host, p.config.HashChain.StorageID, "certificatelogverify-hashchain")
+		client, err := getStorageClient(ctx, host, p.id, p.config.HashChain.StorageID, "certificatelogverify-hashchain")
 		if err != nil {
 			return fmt.Errorf("failed to get hash chain storage client: %w", err)
 		}
@@ -228,7 +230,7 @@ func (p *certificateHashProcessor) Start(ctx context.Context, host component.Hos
 	}
 
 	if p.config.DeadLetter.Enabled {
-		client, err := getStorageClient(ctx, host, p.config.DeadLetter.StorageID, "certificatelogverify-deadletter")
+		client, err := getStorageClient(ctx, host, p.id, p.config.DeadLetter.StorageID, "certificatelogverify-deadletter")
 		if err != nil {
 			return fmt.Errorf("failed to get dead letter storage client: %w", err)
 		}
@@ -242,7 +244,7 @@ func (p *certificateHashProcessor) Start(ctx context.Context, host component.Hos
 	return nil
 }
 
-func getStorageClient(ctx context.Context, host component.Host, storageID component.ID, clientName string) (storage.Client, error) {
+func getStorageClient(ctx context.Context, host component.Host, ownerID, storageID component.ID, clientName string) (storage.Client, error) {
 	extensions := host.GetExtensions()
 	storageExtension, exists := extensions[storageID]
 	if !exists {
@@ -252,10 +254,10 @@ func getStorageClient(ctx context.Context, host component.Host, storageID compon
 	if !ok {
 		return nil, fmt.Errorf("storage extension %s does not implement storage.Extension", storageID)
 	}
-	return storageExt.GetClient(ctx, component.KindProcessor, storageID, clientName)
+	return storageExt.GetClient(ctx, component.KindProcessor, ownerID, clientName)
 }
 
-func (p *certificateHashProcessor) Shutdown(ctx context.Context) error {
+func (p *verifyProcessor) Shutdown(ctx context.Context) error {
 	if p.telemetry != nil {
 		p.telemetry.Shutdown()
 	}

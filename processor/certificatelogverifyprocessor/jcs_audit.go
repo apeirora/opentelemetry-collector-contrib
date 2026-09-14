@@ -5,15 +5,15 @@ package certificatelogverifyprocessor
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"sort"
-	"strconv"
 	"strings"
-	"time"
+	"unicode/utf8"
 
-	"github.com/deszhou/jcs"
+	"github.com/gowebpki/jcs"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 )
@@ -32,12 +32,10 @@ const (
 	auditAttrSequenceNo    = "audit.sequence.number"
 	auditAttrPrevHash      = "audit.prev.hash"
 	auditAttrIntegrityVal  = "audit.integrity.value"
-)
 
-type jcsAttr struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
-}
+	jsonMaxDepth      = 128
+	jsonMaxInputBytes = 1 << 21
+)
 
 func isIntegrityAttributeKey(key string) bool {
 	return key == auditAttrIntegrityVal || strings.HasPrefix(key, "audit.integrity.")
@@ -58,66 +56,132 @@ func isExcludedFromJCS(key string) bool {
 	return isIntegrityAttributeKey(key) || isProcessorOutcomeAttribute(key)
 }
 
-func jcsCanonicalAuditRecord(lr plog.LogRecord) ([]byte, error) {
-	attrs := collectNonIntegrityAttributes(lr)
-	sort.Slice(attrs, func(i, j int) bool {
-		if attrs[i].Key == attrs[j].Key {
-			return attrs[i].Value < attrs[j].Value
+func serializeLogRecord(lr plog.LogRecord) ([]byte, error) {
+	data := make(map[string]any)
+
+	if lr.EventName() != "" {
+		data["event_name"] = lr.EventName()
+	}
+
+	if lr.Body().Type() == pcommon.ValueTypeStr {
+		body := lr.Body().Str()
+		if !utf8.ValidString(body) {
+			return nil, errors.New("log record body contains invalid UTF-8")
 		}
-		return attrs[i].Key < attrs[j].Key
+		data["body"] = body
+	}
+
+	if lr.Timestamp() != 0 {
+		data["timestamp"] = lr.Timestamp().AsTime().UnixNano()
+	}
+
+	if lr.ObservedTimestamp() != 0 {
+		data["observed_timestamp"] = lr.ObservedTimestamp().AsTime().UnixNano()
+	}
+
+	if lr.SeverityNumber() != 0 {
+		data["severity_number"] = int32(lr.SeverityNumber())
+	}
+
+	if lr.SeverityText() != "" {
+		data["severity_text"] = lr.SeverityText()
+	}
+
+	if !lr.TraceID().IsEmpty() {
+		data["trace_id"] = lr.TraceID().String()
+	}
+
+	if !lr.SpanID().IsEmpty() {
+		data["span_id"] = lr.SpanID().String()
+	}
+
+	attrs := make(map[string]any)
+	var attrErr error
+	lr.Attributes().Range(func(k string, v pcommon.Value) bool {
+		if isExcludedFromJCS(k) {
+			return true
+		}
+		val, err := valueToInterface(v, 0)
+		if err != nil {
+			attrErr = err
+			return false
+		}
+		attrs[k] = val
+		return true
 	})
-
-	timestamp := lr.Timestamp().AsTime().UTC()
-	observed := lr.ObservedTimestamp().AsTime().UTC()
-	if observed.IsZero() {
-		observed = timestamp
+	if attrErr != nil {
+		return nil, attrErr
+	}
+	if len(attrs) > 0 {
+		data["attributes"] = attrs
 	}
 
-	payload := map[string]any{
-		"timestamp":          formatAuditTimestamp(timestamp),
-		"observed_timestamp": formatAuditTimestamp(observed),
-		"event_name":         lr.EventName(),
-		"audit.record.id":    attrString(lr, auditAttrRecordID),
-		"audit.actor.id":     attrString(lr, auditAttrActorID),
-		"audit.actor.type":   attrString(lr, auditAttrActorType),
-		"audit.action":       attrString(lr, auditAttrAction),
-		"audit.outcome":      attrString(lr, auditAttrOutcome),
-		"attributes":         attrs,
-	}
-	if targetID := attrString(lr, auditAttrTargetID); targetID != "" {
-		payload["audit.target.id"] = targetID
-	}
-	if targetType := attrString(lr, auditAttrTargetType); targetType != "" {
-		payload["audit.target.type"] = targetType
-	}
-	if sourceID := attrString(lr, auditAttrSourceID); sourceID != "" {
-		payload["audit.source.id"] = sourceID
-	}
-	if sourceType := attrString(lr, auditAttrSourceType); sourceType != "" {
-		payload["audit.source.type"] = sourceType
-	}
-	if body := lr.Body().AsString(); body != "" {
-		payload["body"] = body
-	}
-	if schema := attrString(lr, auditAttrSchemaVersion); schema != "" {
-		payload["audit.schema.version"] = schema
-	}
-	if seq, ok := attrInt(lr, auditAttrSequenceNo); ok && seq > 0 {
-		payload["audit.sequence.number"] = seq
-	}
-	if prev := attrString(lr, auditAttrPrevHash); prev != "" {
-		payload["audit.prev.hash"] = prev
-	}
+	return marshalJCS(data)
+}
 
-	data, err := json.Marshal(payload)
+func marshalJCS(v any) ([]byte, error) {
+	raw, err := json.Marshal(v)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal audit record: %w", err)
+		return nil, err
 	}
-	return jcs.Transform(data)
+	if len(raw) > jsonMaxInputBytes {
+		return nil, fmt.Errorf("serialized log record exceeds size limit (%d > %d bytes)", len(raw), jsonMaxInputBytes)
+	}
+	return jcs.Transform(raw)
+}
+
+func valueToInterface(v pcommon.Value, depth int) (any, error) {
+	if depth > jsonMaxDepth {
+		return nil, fmt.Errorf("attribute value exceeds nesting depth limit (%d)", jsonMaxDepth)
+	}
+	switch v.Type() {
+	case pcommon.ValueTypeStr:
+		s := v.Str()
+		if !utf8.ValidString(s) {
+			return nil, errors.New("attribute string value contains invalid UTF-8")
+		}
+		return s, nil
+	case pcommon.ValueTypeInt:
+		return v.Int(), nil
+	case pcommon.ValueTypeDouble:
+		return v.Double(), nil
+	case pcommon.ValueTypeBool:
+		return v.Bool(), nil
+	case pcommon.ValueTypeBytes:
+		return base64.StdEncoding.EncodeToString(v.Bytes().AsRaw()), nil
+	case pcommon.ValueTypeSlice:
+		slice := make([]any, v.Slice().Len())
+		for i := 0; i < v.Slice().Len(); i++ {
+			val, err := valueToInterface(v.Slice().At(i), depth+1)
+			if err != nil {
+				return nil, err
+			}
+			slice[i] = val
+		}
+		return slice, nil
+	case pcommon.ValueTypeMap:
+		m := make(map[string]any)
+		var mapErr error
+		v.Map().Range(func(k string, val pcommon.Value) bool {
+			converted, err := valueToInterface(val, depth+1)
+			if err != nil {
+				mapErr = err
+				return false
+			}
+			m[k] = converted
+			return true
+		})
+		if mapErr != nil {
+			return nil, mapErr
+		}
+		return m, nil
+	default:
+		return nil, nil
+	}
 }
 
 func integrityHashHex(lr plog.LogRecord) (string, error) {
-	canonical, err := jcsCanonicalAuditRecord(lr)
+	canonical, err := serializeLogRecord(lr)
 	if err != nil {
 		return "", err
 	}
@@ -125,46 +189,20 @@ func integrityHashHex(lr plog.LogRecord) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-func collectNonIntegrityAttributes(lr plog.LogRecord) []jcsAttr {
-	attrs := make([]jcsAttr, 0)
-	lr.Attributes().Range(func(k string, v pcommon.Value) bool {
-		if isExcludedFromJCS(k) {
-			return true
-		}
-		attrs = append(attrs, jcsAttr{Key: k, Value: canonicalAttrString(v)})
-		return true
-	})
-	return attrs
-}
-
-func canonicalAttrString(v pcommon.Value) string {
-	switch v.Type() {
-	case pcommon.ValueTypeEmpty:
-		return ""
-	case pcommon.ValueTypeStr:
-		return v.Str()
-	case pcommon.ValueTypeInt:
-		return strconv.FormatInt(v.Int(), 10)
-	case pcommon.ValueTypeBool:
-		return strconv.FormatBool(v.Bool())
-	case pcommon.ValueTypeDouble:
-		return strconv.FormatFloat(v.Double(), 'g', -1, 64)
-	default:
-		return v.AsString()
-	}
-}
-
 func attrString(lr plog.LogRecord, key string) string {
 	v, ok := lr.Attributes().Get(key)
 	if !ok {
 		return ""
 	}
-	return canonicalAttrString(v)
+	if v.Type() == pcommon.ValueTypeStr {
+		return v.Str()
+	}
+	return v.AsString()
 }
 
 func attrInt(lr plog.LogRecord, key string) (int64, bool) {
 	v, ok := lr.Attributes().Get(key)
-	if !ok {
+	if !ok || v.Type() != pcommon.ValueTypeInt {
 		return 0, false
 	}
 	return v.Int(), true
@@ -175,11 +213,10 @@ func resourceAttrString(resource pcommon.Resource, key string) string {
 	if !ok {
 		return ""
 	}
-	return canonicalAttrString(v)
-}
-
-func formatAuditTimestamp(t time.Time) string {
-	return t.UTC().Format("2006-01-02T15:04:05.000000000Z07:00")
+	if v.Type() == pcommon.ValueTypeStr {
+		return v.Str()
+	}
+	return v.AsString()
 }
 
 func streamIDFromRecord(resource pcommon.Resource, lr plog.LogRecord) string {
