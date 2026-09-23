@@ -15,19 +15,19 @@ const (
 	defaultCertificateRef = "fingerprint"
 
 	// Algorithm constants — JWA identifiers (RFC 7518 / RFC 8037 / IANA).
-	AlgorithmRS256      = "RS256"
-	AlgorithmRS512      = "RS512"
-	AlgorithmES256      = "ES256"
-	AlgorithmEdDSA      = "EdDSA"
-	AlgorithmHMACSHA256 = "HMAC-SHA256"
+	algorithmRS256      = "RS256"
+	algorithmRS512      = "RS512"
+	algorithmES256      = "ES256"
+	algorithmEdDSA      = "EdDSA"
+	algorithmHMACSHA256 = "HMAC-SHA256"
 
-	KeySourceK8sSecret = "k8s_secret"
-	KeySourceEnv       = "env"
-	KeySourceFile      = "file"
-	KeySourceBao       = "bao"
+	keySourceK8sSecret = "k8s_secret"
+	keySourceEnv       = "env"
+	keySourceFile      = "file"
+	keySourceBao       = "bao"
 
-	CertificateRefFingerprint = "fingerprint"
-	CertificateRefFull        = "full"
+	certificateRefFingerprint = "fingerprint"
+	certificateRefFull        = "full"
 )
 
 var (
@@ -106,9 +106,9 @@ func createDefaultConfig() component.Config {
 func (c *Config) Validate() error {
 	isHMAC := false
 	switch c.Algorithm {
-	case AlgorithmRS256, AlgorithmRS512, AlgorithmES256, AlgorithmEdDSA:
+	case algorithmRS256, algorithmRS512, algorithmES256, algorithmEdDSA:
 		// valid asymmetric
-	case AlgorithmHMACSHA256:
+	case algorithmHMACSHA256:
 		isHMAC = true
 	case "":
 		c.Algorithm = defaultAlgorithm
@@ -123,13 +123,13 @@ func (c *Config) Validate() error {
 	} else {
 		if c.CertificateRef == "" {
 			c.CertificateRef = defaultCertificateRef
-		} else if c.CertificateRef != CertificateRefFingerprint && c.CertificateRef != CertificateRefFull {
+		} else if c.CertificateRef != certificateRefFingerprint && c.CertificateRef != certificateRefFull {
 			return errInvalidCertificateRef
 		}
 	}
 
 	switch c.KeySource.Type {
-	case KeySourceK8sSecret:
+	case keySourceK8sSecret:
 		if c.KeySource.K8sSecret == nil {
 			return errMissingKeySourceConfig
 		}
@@ -151,7 +151,7 @@ func (c *Config) Validate() error {
 				return errors.New("key_source.k8s_secret.private_key is required")
 			}
 		}
-	case KeySourceEnv:
+	case keySourceEnv:
 		if c.KeySource.Env == nil {
 			return errMissingKeySourceConfig
 		}
@@ -170,7 +170,7 @@ func (c *Config) Validate() error {
 				return errors.New("key_source.env.hmac_key must not be set for asymmetric algorithm")
 			}
 		}
-	case KeySourceFile:
+	case keySourceFile:
 		if c.KeySource.File == nil {
 			return errMissingKeySourceConfig
 		}
@@ -186,7 +186,7 @@ func (c *Config) Validate() error {
 				return errors.New("key_source.file.private_key is required")
 			}
 		}
-	case KeySourceBao:
+	case keySourceBao:
 		if c.KeySource.Bao == nil {
 			return errMissingKeySourceConfig
 		}
@@ -216,9 +216,9 @@ func (c *Config) Validate() error {
 // Returns crypto.Hash(0) for EdDSA (hashes internally).
 func (c *Config) GetHash() crypto.Hash {
 	switch c.Algorithm {
-	case AlgorithmRS512:
+	case algorithmRS512:
 		return crypto.SHA512
-	case AlgorithmEdDSA:
+	case algorithmEdDSA:
 		return crypto.Hash(0)
 	default: // RS256, ES256, HMAC-SHA256
 		return crypto.SHA256

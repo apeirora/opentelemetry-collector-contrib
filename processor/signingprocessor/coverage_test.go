@@ -173,7 +173,7 @@ func TestConfigValidate(t *testing.T) {
 			cfg: Config{
 				Algorithm: "RS256",
 				KeySource: KeySourceConfig{
-					Type: KeySourceEnv,
+					Type: keySourceEnv,
 					Env: &EnvKeyConfig{
 						Certificate: "${env:SIGNING_CERT_PEM}",
 						PrivateKey:  "${env:SIGNING_KEY_PEM}",
@@ -248,7 +248,7 @@ func TestLoadConfig(t *testing.T) {
 				Algorithm:      "RS256",
 				CertificateRef: "fingerprint",
 				KeySource: KeySourceConfig{
-					Type: KeySourceFile,
+					Type: keySourceFile,
 					File: &FileKeyConfig{
 						Certificate: "/etc/otelcol/signing-cert.pem",
 						PrivateKey:  "/etc/otelcol/signing-key.pem",
@@ -262,7 +262,7 @@ func TestLoadConfig(t *testing.T) {
 				Algorithm:      "RS512",
 				CertificateRef: "full",
 				KeySource: KeySourceConfig{
-					Type: KeySourceFile,
+					Type: keySourceFile,
 					File: &FileKeyConfig{
 						Certificate: "/etc/otelcol/signing-cert.pem",
 						PrivateKey:  "/etc/otelcol/signing-key.pem",
@@ -276,7 +276,7 @@ func TestLoadConfig(t *testing.T) {
 				Algorithm:      "RS256",
 				CertificateRef: "fingerprint",
 				KeySource: KeySourceConfig{
-					Type: KeySourceEnv,
+					Type: keySourceEnv,
 					Env: &EnvKeyConfig{
 						Certificate: "${env:SIGNING_CERT_PEM}",
 						PrivateKey:  "${env:SIGNING_KEY_PEM}",
@@ -290,7 +290,7 @@ func TestLoadConfig(t *testing.T) {
 				Algorithm:      "RS256",
 				CertificateRef: "fingerprint",
 				KeySource: KeySourceConfig{
-					Type: KeySourceK8sSecret,
+					Type: keySourceK8sSecret,
 					K8sSecret: &K8sSecretConfig{
 						Name:      "signing-secret",
 						Namespace: "default",
@@ -308,7 +308,7 @@ func TestLoadConfig(t *testing.T) {
 				Algorithm:      "RS256",
 				CertificateRef: "fingerprint",
 				KeySource: KeySourceConfig{
-					Type: KeySourceBao,
+					Type: keySourceBao,
 					Bao: &BaoKeyConfig{
 						Address:    "https://bao.example.com",
 						MountPath:  "secret",
@@ -327,7 +327,7 @@ func TestLoadConfig(t *testing.T) {
 				Algorithm:      "HMAC-SHA256",
 				CertificateRef: "",
 				KeySource: KeySourceConfig{
-					Type: KeySourceEnv,
+					Type: keySourceEnv,
 					Env:  &EnvKeyConfig{HMACKey: "${env:SIGNING_HMAC_KEY}"},
 				},
 			},
@@ -405,9 +405,9 @@ func TestCreateLogsProcessorFileProvider(t *testing.T) {
 
 	cfg := &Config{
 		Algorithm:      "RS256",
-		CertificateRef: CertificateRefFingerprint,
+		CertificateRef: certificateRefFingerprint,
 		KeySource: KeySourceConfig{
-			Type: KeySourceFile,
+			Type: keySourceFile,
 			File: &FileKeyConfig{Certificate: certFile, PrivateKey: keyFile},
 		},
 	}
@@ -699,7 +699,7 @@ func TestBuildCertificateRef(t *testing.T) {
 	prov, _ := newFileKeyMaterialProvider(&FileKeyConfig{Certificate: certFile, PrivateKey: keyFile})
 
 	t.Run("fingerprint", func(t *testing.T) {
-		ref, err := buildCertificateRef(prov, CertificateRefFingerprint)
+		ref, err := buildCertificateRef(prov, certificateRefFingerprint)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -709,7 +709,7 @@ func TestBuildCertificateRef(t *testing.T) {
 	})
 
 	t.Run("full", func(t *testing.T) {
-		ref, err := buildCertificateRef(prov, CertificateRefFull)
+		ref, err := buildCertificateRef(prov, certificateRefFull)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -735,7 +735,7 @@ func (*faultyProvider) GetHMACKey() []byte                { return nil }
 var _ KeyMaterialProvider = (*faultyProvider)(nil)
 
 func TestBuildCertificateRefNilCert(t *testing.T) {
-	_, err := buildCertificateRef(&faultyProvider{}, CertificateRefFingerprint)
+	_, err := buildCertificateRef(&faultyProvider{}, certificateRefFingerprint)
 	if err == nil {
 		t.Error("expected error when provider returns nil certificate")
 	}
@@ -752,7 +752,7 @@ func TestProcessorStartShutdown(t *testing.T) {
 	prov, _ := newFileKeyMaterialProvider(&FileKeyConfig{Certificate: certFile, PrivateKey: keyFile})
 
 	p := &signingProcessor{
-		config:       &Config{Algorithm: "RS256", CertificateRef: CertificateRefFingerprint},
+		config:       &Config{Algorithm: "RS256", CertificateRef: certificateRefFingerprint},
 		provider:     prov,
 		nextLogs:     &logSink{},
 		hashFunc:     func() hash.Hash { return crypto.SHA256.New() },
@@ -822,7 +822,7 @@ func TestValueToInterface(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNewProcessorUnsupportedHash(t *testing.T) {
-	if err := (&Config{Algorithm: "MD5", KeySource: KeySourceConfig{Type: KeySourceFile, File: &FileKeyConfig{Certificate: "c", PrivateKey: "k"}}}).Validate(); err == nil {
+	if err := (&Config{Algorithm: "MD5", KeySource: KeySourceConfig{Type: keySourceFile, File: &FileKeyConfig{Certificate: "c", PrivateKey: "k"}}}).Validate(); err == nil {
 		t.Error("Validate() should reject MD5")
 	}
 }
@@ -844,7 +844,7 @@ func TestConsumeLogsResourceAttrs(t *testing.T) {
 	prov := newTestProvider(t)
 	sink := &logSink{}
 	p := &signingProcessor{
-		config:       &Config{Algorithm: "RS256", CertificateRef: CertificateRefFingerprint},
+		config:       &Config{Algorithm: "RS256", CertificateRef: certificateRefFingerprint},
 		provider:     prov,
 		nextLogs:     sink,
 		hashFunc:     func() hash.Hash { return crypto.SHA256.New() },
@@ -898,7 +898,7 @@ func TestNewKeyMaterialProviderEnv(t *testing.T) {
 	cfg := &Config{
 		Algorithm: "RS256",
 		KeySource: KeySourceConfig{
-			Type: KeySourceEnv,
+			Type: keySourceEnv,
 			Env:  &EnvKeyConfig{Certificate: string(certPEM), PrivateKey: string(keyPEM)},
 		},
 	}
@@ -915,7 +915,7 @@ func TestNewKeyMaterialProviderK8sError(t *testing.T) {
 	cfg := &Config{
 		Algorithm: "RS256",
 		KeySource: KeySourceConfig{
-			Type: KeySourceK8sSecret,
+			Type: keySourceK8sSecret,
 			K8sSecret: &K8sSecretConfig{
 				Name: "signing-secret", Namespace: "default",
 				SecretConfig: SecretConfig{Certificate: "tls.crt", PrivateKey: "tls.key"},
@@ -932,7 +932,7 @@ func TestNewKeyMaterialProviderBaoError(t *testing.T) {
 	cfg := &Config{
 		Algorithm: "RS256",
 		KeySource: KeySourceConfig{
-			Type: KeySourceBao,
+			Type: keySourceBao,
 			Bao: &BaoKeyConfig{
 				Address:    "http://127.0.0.1:19999",
 				SecretPath: "secret/data/signing",
