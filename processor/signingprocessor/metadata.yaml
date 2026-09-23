@@ -4,11 +4,11 @@ type: signing
 status:
   class: processor
   stability:
-    development: [ logs ]
-  distributions: []
+    alpha: [ logs ]
+  distributions: [contrib]
   warnings: []
   codeowners:
-    active: [hilmarf, jmacd]
+    active: [MJarmo, hilmarf, jmacd]
 
 tests:
   config:
