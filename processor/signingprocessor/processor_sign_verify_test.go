@@ -123,7 +123,7 @@ func verifyRecord(t *testing.T, lr plog.LogRecord, pubKey *rsa.PublicKey) {
 func TestSignVerifyBasic(t *testing.T) {
 	prov := newTestProvider(t)
 	p := &signingProcessor{
-		config:       &Config{Algorithm: "RS256", CertificateRef: CertificateRefFingerprint},
+		config:       &Config{Algorithm: "RS256", CertificateRef: certificateRefFingerprint},
 		provider:     prov,
 		hashFunc:     func() hash.Hash { return crypto.SHA256.New() },
 		jwaAlgorithm: "RS256",
@@ -153,7 +153,7 @@ func TestSignVerifyBasic(t *testing.T) {
 func TestSignVerifyWithTraceCorrelation(t *testing.T) {
 	prov := newTestProvider(t)
 	p := &signingProcessor{
-		config:       &Config{Algorithm: "RS256", CertificateRef: CertificateRefFingerprint},
+		config:       &Config{Algorithm: "RS256", CertificateRef: certificateRefFingerprint},
 		provider:     prov,
 		hashFunc:     func() hash.Hash { return crypto.SHA256.New() },
 		jwaAlgorithm: "RS256",
@@ -244,7 +244,7 @@ func TestIntegrityAttrsExcludedFromPayload(t *testing.T) {
 func TestSignVerifyEventName(t *testing.T) {
 	prov := newTestProvider(t)
 	p := &signingProcessor{
-		config:       &Config{Algorithm: "RS256", CertificateRef: CertificateRefFingerprint},
+		config:       &Config{Algorithm: "RS256", CertificateRef: certificateRefFingerprint},
 		provider:     prov,
 		hashFunc:     func() hash.Hash { return crypto.SHA256.New() },
 		jwaAlgorithm: "RS256",
@@ -325,7 +325,7 @@ func rawValue(v pcommon.Value) any {
 func TestSignVerifyStructuredBody(t *testing.T) {
 	prov := newTestProvider(t)
 	p := &signingProcessor{
-		config:       &Config{Algorithm: "RS256", CertificateRef: CertificateRefFingerprint},
+		config:       &Config{Algorithm: "RS256", CertificateRef: certificateRefFingerprint},
 		provider:     prov,
 		hashFunc:     func() hash.Hash { return crypto.SHA256.New() },
 		jwaAlgorithm: "RS256",

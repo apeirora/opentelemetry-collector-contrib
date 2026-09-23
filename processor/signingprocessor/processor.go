@@ -71,7 +71,7 @@ func newProcessor(ctx context.Context, cfg *Config, nextLogs consumer.Logs, sett
 	}
 
 	var certRef string
-	if cfg.Algorithm != AlgorithmHMACSHA256 {
+	if cfg.Algorithm != algorithmHMACSHA256 {
 		certRef, err = buildCertificateRef(provider, cfg.CertificateRef)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build certificate reference: %w", err)
@@ -159,7 +159,7 @@ func (p *signingProcessor) processLogRecord(lr plog.LogRecord) error {
 // computes an HMAC-SHA256 MAC.
 func (p *signingProcessor) sign(payload []byte) ([]byte, error) {
 	switch p.config.Algorithm {
-	case AlgorithmRS256, AlgorithmRS512:
+	case algorithmRS256, algorithmRS512:
 		h := p.hashFunc()
 		if _, err := h.Write(payload); err != nil {
 			return nil, fmt.Errorf("failed to compute hash: %w", err)
@@ -172,7 +172,7 @@ func (p *signingProcessor) sign(payload []byte) ([]byte, error) {
 		}
 		return rsa.SignPKCS1v15(rand.Reader, rsaKey, p.config.GetHash(), hashBytes)
 
-	case AlgorithmES256:
+	case algorithmES256:
 		h := p.hashFunc()
 		if _, err := h.Write(payload); err != nil {
 			return nil, fmt.Errorf("failed to compute hash: %w", err)
@@ -185,7 +185,7 @@ func (p *signingProcessor) sign(payload []byte) ([]byte, error) {
 		}
 		return ecdsa.SignASN1(rand.Reader, ecKey, hashBytes)
 
-	case AlgorithmEdDSA:
+	case algorithmEdDSA:
 		privateKey := p.provider.GetPrivateKey()
 		edKey, ok := privateKey.(ed25519.PrivateKey)
 		if !ok {
@@ -194,7 +194,7 @@ func (p *signingProcessor) sign(payload []byte) ([]byte, error) {
 		// Ed25519 signs the raw message; no pre-hashing.
 		return ed25519.Sign(edKey, payload), nil
 
-	case AlgorithmHMACSHA256:
+	case algorithmHMACSHA256:
 		key := p.provider.GetHMACKey()
 		if len(key) == 0 {
 			return nil, errors.New("algorithm HMAC-SHA256 requires a non-empty HMAC key")
@@ -375,7 +375,7 @@ func buildCertificateRef(provider KeyMaterialProvider, mode string) (string, err
 	}
 	der := cert.Raw
 	switch mode {
-	case CertificateRefFull:
+	case certificateRefFull:
 		return base64.StdEncoding.EncodeToString(der), nil
 	default: // CertificateRefFingerprint
 		sum := sha256.Sum256(der)

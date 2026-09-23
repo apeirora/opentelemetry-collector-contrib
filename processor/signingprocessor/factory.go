@@ -48,17 +48,17 @@ func createLogsProcessor(
 
 func newKeyMaterialProvider(ctx context.Context, cfg *Config, logger *zap.Logger) (KeyMaterialProvider, error) {
 	switch cfg.KeySource.Type {
-	case KeySourceK8sSecret:
+	case keySourceK8sSecret:
 		logger.Info("Initializing key material provider from Kubernetes Secret",
 			zap.String("name", cfg.KeySource.K8sSecret.Name),
 			zap.String("namespace", cfg.KeySource.K8sSecret.Namespace),
 		)
 		return newK8sKeyMaterialProvider(ctx, cfg.KeySource.K8sSecret, logger)
-	case KeySourceEnv:
+	case keySourceEnv:
 		logger.Info("Initializing key material provider from inline env config (use ${env:VAR} in YAML)")
 		return newInlineKeyMaterialProvider(cfg.KeySource.Env)
-	case KeySourceFile:
-		if cfg.Algorithm == AlgorithmHMACSHA256 {
+	case keySourceFile:
+		if cfg.Algorithm == algorithmHMACSHA256 {
 			logger.Info("Initializing HMAC key material provider from file",
 				zap.String("hmac_key", cfg.KeySource.File.HMACKey),
 			)
@@ -69,7 +69,7 @@ func newKeyMaterialProvider(ctx context.Context, cfg *Config, logger *zap.Logger
 			)
 		}
 		return newFileKeyMaterialProvider(cfg.KeySource.File)
-	case KeySourceBao:
+	case keySourceBao:
 		logger.Info("Initializing key material provider from OpenBao/Vault",
 			zap.String("secret_path", cfg.KeySource.Bao.SecretPath),
 		)
