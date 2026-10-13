@@ -23,8 +23,11 @@ and key material described by the resource attributes
 `audit.integrity.certificate`. Supported algorithms match
 `signingprocessor`: `RS256`, `RS512`, `ES256`, `EdDSA`, and `HMAC-SHA256`.
 
-Failed records can optionally be marked or dropped, and verification failures
-can be written to a dead-letter storage extension.
+Failed records can be annotated in place, cause the whole batch to be rejected,
+or be dropped while good records are still exported. Permanent errors identify
+failed records by `audit.record.id` when present (`id=<value>`), otherwise by
+batch index (`record[resource,scope,record]`), with no other log content.
+Verification failures can be written to a dead-letter storage extension.
 
 ## Configuration
 
@@ -40,7 +43,8 @@ processors:
     mode: sync
 
     # How to handle verification failures. Default: strict.
-    # - strict: drop failed records and fail the batch
+    # - strict: reject the whole batch (export nothing), return a permanent error
+    # - drop:   drop failed records, export the rest, return a permanent error
     # - mark:   annotate failed records and continue
     failure_mode: strict
 
@@ -92,13 +96,13 @@ processors:
 
 Same provider set as [`signingprocessor`](../signingprocessor), but every
 provider uses the shared YAML keys `certificate` or `hmac_key` (private-key
-fields are omitted). For now each provider config should supply a single
-material — either a certificate or an HMAC secret.
+fields are omitted). Each provider config must supply exactly one material —
+either a certificate or an HMAC secret, not both.
 
 | Provider | `certificate` / `hmac_key` mean | Description |
 | --- | --- | --- |
-| `file` | Local file paths | Reads a PEM certificate or a raw HMAC secret from disk. Supports plain PEM and base64-encoded PEM for certificates. |
-| `env` | Key material (usually via `${env:}`) | Holds resolved PEM / HMAC strings from Collector confmap `${env:VAR}` expansion (not env-var names). |
+| `file` | Local file paths | Reads a PEM certificate or a standard base64-encoded HMAC secret from disk. Supports plain PEM and base64-encoded PEM for certificates. |
+| `env` | Key material (usually via `${env:}`) | Holds resolved PEM / standard base64-encoded HMAC strings from Collector confmap `${env:VAR}` expansion (not env-var names). |
 | `k8s_secret` | Keys inside the Secret | Reads a Kubernetes Secret by name/namespace via the in-cluster or kubeconfig client. |
 | `bao` | Fields inside the secret | Reads key material from an [OpenBao](https://openbao.org/) KV v2 secrets engine via [`github.com/openbao/openbao/api/v2`](https://pkg.go.dev/github.com/openbao/openbao/api/v2) (`mount_path` default `secret`, `secret_path` relative to that mount). |
 
@@ -179,9 +183,21 @@ Serialization fails with a hard error if the total pre-JCS JSON size exceeds
 
 ## Output attributes
 
-The concrete verification implementation (follow-up PR) stamps per-record
-outcome attributes such as verification status and machine-readable reason
-codes after checking the integrity attributes above.
+After verification, each log record is stamped with:
+
+| Attribute                      | Type   | Description                                                                 |
+|--------------------------------|--------|-----------------------------------------------------------------------------|
+| `audit.verification.status`    | string | `verified` on success. `failed` when `failure_mode` is `mark`.              |
+| `audit.verification.reason`    | string | Machine-readable failure reason; set only when status is `failed`.          |
+| `audit.verification.profile`   | string | Echo of the configured `verification_profile` (default: `default`).         |
+
+Failure reason codes include: `missing_integrity_value`, `missing_algorithm`,
+`unsupported_algorithm`, `missing_certificate`, `certificate_mismatch`,
+`key_material_mismatch`, `invalid_signature_encoding`, `integrity_mismatch`,
+`serialization_error`.
+
+These `audit.verification.*` attributes are excluded from the signed payload
+reconstruction so re-verification remains stable.
 
 ## Example pipeline
 
