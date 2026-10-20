@@ -122,6 +122,44 @@ func TestVerifyRS256HappyPath(t *testing.T) {
 	assert.Equal(t, statusVerified, status.Str())
 }
 
+func TestVerifyRS512HappyPathAndTamper(t *testing.T) {
+	key, cert, _ := newTestRSA(t)
+	p := newVerifyProc(t, &Config{FailureMode: failureModeMark, VerificationProfile: "default"}, &staticProvider{cert: cert})
+
+	ld := makeLogs("rs512-body", map[string]string{"k": "v"}, algorithmRS512, fingerprint(cert), "")
+	lr := ld.ResourceLogs().At(0).ScopeLogs().At(0).LogRecords().At(0)
+	payload, err := p.serializeLogRecord(lr)
+	require.NoError(t, err)
+	lr.Attributes().PutStr(attrIntegrityValue, signRSA(t, key, payload, crypto.SHA512))
+
+	require.NoError(t, p.ConsumeLogs(context.Background(), ld))
+	status, ok := lr.Attributes().Get(attrVerificationStatus)
+	require.True(t, ok)
+	assert.Equal(t, statusVerified, status.Str())
+
+	ld2 := makeLogs("rs512-body", nil, algorithmRS512, fingerprint(cert), "")
+	lr2 := ld2.ResourceLogs().At(0).ScopeLogs().At(0).LogRecords().At(0)
+	payload2, err := p.serializeLogRecord(lr2)
+	require.NoError(t, err)
+	lr2.Attributes().PutStr(attrIntegrityValue, signRSA(t, key, payload2, crypto.SHA256))
+
+	require.NoError(t, p.ConsumeLogs(context.Background(), ld2))
+	reason, ok := lr2.Attributes().Get(attrVerificationReason)
+	require.True(t, ok)
+	assert.Equal(t, reasonIntegrityMismatch, reason.Str())
+}
+
+func TestEmptyValueSerializedAsEmptyObject(t *testing.T) {
+	p := newVerifyProc(t, &Config{FailureMode: failureModeStrict, VerificationProfile: "default"}, &staticProvider{hmacKey: []byte("x")})
+	lr := plog.NewLogRecord()
+	lr.Attributes().PutEmpty("unset")
+	lr.Attributes().PutEmptySlice("list").AppendEmpty()
+
+	payload, err := p.serializeLogRecord(lr)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"attributes":{"list":[{}],"unset":{}}}`, string(payload))
+}
+
 func TestVerifyHMACHappyPathAndTamper(t *testing.T) {
 	hmacKey := []byte("super-secret-hmac-key")
 	p := newVerifyProc(t, &Config{FailureMode: failureModeDrop, VerificationProfile: "default"}, &staticProvider{hmacKey: hmacKey})
@@ -411,6 +449,75 @@ func TestIntegrityAttrsExcludedFromPayload(t *testing.T) {
 	assert.NotContains(t, string(payload), "audit.integrity")
 	assert.NotContains(t, string(payload), "audit.verification")
 	assert.Contains(t, string(payload), "keep")
+}
+
+func hmacSign(t *testing.T, key, payload []byte) string {
+	t.Helper()
+	mac := hmac.New(sha256.New, key)
+	_, err := mac.Write(payload)
+	require.NoError(t, err)
+	return base64.StdEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func TestVerificationStampsAcrossResignChain(t *testing.T) {
+	hmacKey := []byte("chain-key")
+	p := newVerifyProc(t, &Config{FailureMode: failureModeMark, VerificationProfile: "default"}, &staticProvider{hmacKey: hmacKey})
+
+	newSignedLogs := func(t *testing.T) (plog.Logs, plog.LogRecord) {
+		ld := makeLogs("chain-body", map[string]string{"user": "alice"}, algorithmHMACSHA256, "", "")
+		lr := ld.ResourceLogs().At(0).ScopeLogs().At(0).LogRecords().At(0)
+		payload, err := p.serializeLogRecord(lr)
+		require.NoError(t, err)
+		lr.Attributes().PutStr(attrIntegrityValue, hmacSign(t, hmacKey, payload))
+		require.NoError(t, p.ConsumeLogs(context.Background(), ld))
+		status, ok := lr.Attributes().Get(attrVerificationStatus)
+		require.True(t, ok)
+		require.Equal(t, statusVerified, status.Str())
+		return ld, lr
+	}
+
+	resign := func(t *testing.T, lr plog.LogRecord) {
+		payload, err := p.serializePayload(lr, true)
+		require.NoError(t, err)
+		lr.Attributes().PutStr(attrIntegrityValue, hmacSign(t, hmacKey, payload))
+	}
+
+	t.Run("verify then verify", func(t *testing.T) {
+		ld, lr := newSignedLogs(t)
+		require.NoError(t, p.ConsumeLogs(context.Background(), ld))
+		status, _ := lr.Attributes().Get(attrVerificationStatus)
+		assert.Equal(t, statusVerified, status.Str())
+	})
+
+	t.Run("sign verify resign verify", func(t *testing.T) {
+		ld, lr := newSignedLogs(t)
+		resign(t, lr)
+		require.NoError(t, p.ConsumeLogs(context.Background(), ld))
+		status, _ := lr.Attributes().Get(attrVerificationStatus)
+		assert.Equal(t, statusVerified, status.Str())
+		_, hasReason := lr.Attributes().Get(attrVerificationReason)
+		assert.False(t, hasReason)
+	})
+
+	t.Run("stamp altered after resign", func(t *testing.T) {
+		ld, lr := newSignedLogs(t)
+		resign(t, lr)
+		lr.Attributes().PutStr(attrVerificationProfile, "forged")
+		require.NoError(t, p.ConsumeLogs(context.Background(), ld))
+		status, _ := lr.Attributes().Get(attrVerificationStatus)
+		assert.Equal(t, statusFailed, status.Str())
+		reason, _ := lr.Attributes().Get(attrVerificationReason)
+		assert.Equal(t, reasonIntegrityMismatch, reason.Str())
+	})
+
+	t.Run("body tampered after resign", func(t *testing.T) {
+		ld, lr := newSignedLogs(t)
+		resign(t, lr)
+		lr.Body().SetStr("tampered")
+		require.NoError(t, p.ConsumeLogs(context.Background(), ld))
+		status, _ := lr.Attributes().Get(attrVerificationStatus)
+		assert.Equal(t, statusFailed, status.Str())
+	})
 }
 
 func TestValidateSecretMaterialExactlyOne(t *testing.T) {

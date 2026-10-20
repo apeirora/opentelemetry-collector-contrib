@@ -815,6 +815,31 @@ func TestValueToInterface(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("empty", func(t *testing.T) {
+		result, err := p.valueToInterface(pcommon.NewValueEmpty(), 0)
+		if err != nil {
+			t.Fatalf("valueToInterface returned error: %v", err)
+		}
+		if m, ok := result.(map[string]any); !ok || len(m) != 0 {
+			t.Errorf("expected empty object for empty value, got %#v", result)
+		}
+	})
+}
+
+func TestEmptyValueSerializedAsEmptyObject(t *testing.T) {
+	p := &signingProcessor{config: &Config{Algorithm: "RS256"}}
+	lr := plog.NewLogRecord()
+	lr.Attributes().PutEmpty("unset")
+	lr.Attributes().PutEmptySlice("list").AppendEmpty()
+
+	payload, err := p.serializeLogRecord(lr)
+	if err != nil {
+		t.Fatalf("serializeLogRecord returned error: %v", err)
+	}
+	if want := `{"attributes":{"list":[{}],"unset":{}}}`; string(payload) != want {
+		t.Errorf("payload = %s, want %s", payload, want)
+	}
 }
 
 // ---------------------------------------------------------------------------

@@ -151,6 +151,13 @@ canonicalises it with RFC 8785 (JCS), and signs the result. All
 `audit.integrity.*` attributes are excluded so the signature can be verified
 without removing those attributes first.
 
+The verifier also excludes its own `audit.verification.*` output attributes,
+so a record can pass through several verify processors. If that check fails
+and the record already carries `audit.verification.*` attributes, the payload
+is rebuilt once with them included. This covers pipelines that re-sign a record
+after an earlier verify step (sign → verify → sign → verify), where the second
+signer covered those attributes.
+
 | Field                | JSON key             | Encoding                                       |
 |----------------------|----------------------|------------------------------------------------|
 | `EventName`          | `event_name`         | string; omitted if empty                       |
@@ -177,6 +184,7 @@ identical canonical JSON.
 | `bytes`   | `{"bytesValue": "<base64>"}`                                      |
 | `slice`   | JSON array (elements encoded recursively; max nesting depth 128)  |
 | `map`     | JSON object (values encoded recursively; max nesting depth 128)   |
+| `empty`   | `{}` (empty object, matching an unset OTLP `AnyValue`)            |
 
 Serialization fails with a hard error if the total pre-JCS JSON size exceeds
 2 MiB or the attribute nesting depth exceeds 128 levels.
