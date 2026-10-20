@@ -164,6 +164,7 @@ identical canonical JSON.
 | `bytes`   | `{"bytesValue": "<base64>"}`                                      |
 | `slice`   | JSON array (elements encoded recursively; max nesting depth 128)  |
 | `map`     | JSON object (values encoded recursively; max nesting depth 128)   |
+| `empty`   | `{}` (empty object, matching an unset OTLP `AnyValue`)            |
 
 Serialization fails with a hard error if the total pre-JCS JSON size exceeds
 2 MiB, if the attribute nesting depth exceeds 128 levels, or if the event name,
