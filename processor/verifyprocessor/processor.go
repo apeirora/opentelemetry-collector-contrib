@@ -11,6 +11,7 @@ import (
 	"crypto/hmac"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
@@ -48,6 +49,7 @@ const (
 	attrVerificationStatus  = "audit.verification.status"
 	attrVerificationReason  = "audit.verification.reason"
 	attrVerificationProfile = "audit.verification.profile"
+	attrVerificationPrefix  = "audit.verification."
 
 	statusVerified = "verified"
 	statusFailed   = "failed"
@@ -276,10 +278,37 @@ func (p *verifyProcessor) verifyLogRecord(lr plog.LogRecord, algorithm, certRef 
 		return &verifyFailure{reason: reasonInvalidSignature, err: err}
 	}
 
-	if err := p.verifySignature(algorithm, payload, sigBytes); err != nil {
+	err = p.verifySignature(algorithm, payload, sigBytes)
+	if err == nil {
+		return nil
+	}
+	if !hasVerificationAttrs(lr) {
+		return &verifyFailure{reason: reasonIntegrityMismatch, err: err}
+	}
+
+	stampedPayload, serErr := p.serializePayload(lr, true)
+	if serErr != nil {
+		return &verifyFailure{reason: reasonSerializationError, err: serErr}
+	}
+	if retryErr := p.verifySignature(algorithm, stampedPayload, sigBytes); retryErr != nil {
 		return &verifyFailure{reason: reasonIntegrityMismatch, err: err}
 	}
 	return nil
+}
+
+// hasVerificationAttrs reports whether a previous verifyprocessor stamped the
+// record. A signer placed after that verifier signs over those stamps, so the
+// payload must be rebuilt with them included to match its signature.
+func hasVerificationAttrs(lr plog.LogRecord) bool {
+	found := false
+	lr.Attributes().Range(func(k string, _ pcommon.Value) bool {
+		if strings.HasPrefix(k, attrVerificationPrefix) {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
 }
 
 func (p *verifyProcessor) verifySignature(algorithm string, payload, sig []byte) error {
@@ -297,11 +326,8 @@ func (p *verifyProcessor) verifySignature(algorithm string, payload, sig []byte)
 		if !ok {
 			return errors.New("RS512 requires an RSA certificate public key")
 		}
-		sum := crypto.SHA512.New()
-		if _, err := sum.Write(payload); err != nil {
-			return err
-		}
-		return rsa.VerifyPKCS1v15(pub, crypto.SHA512, sum.Sum(nil), sig)
+		sum := sha512.Sum512(payload)
+		return rsa.VerifyPKCS1v15(pub, crypto.SHA512, sum[:], sig)
 
 	case algorithmES256:
 		pub, ok := p.provider.GetCertificate().PublicKey.(*ecdsa.PublicKey)
@@ -339,6 +365,8 @@ func (p *verifyProcessor) verifySignature(algorithm string, payload, sig []byte)
 	}
 }
 
+// TODO: support additional certificate reference methods (Key ID, Subject Key
+// Identifier, Issuer+Serial) once signingprocessor can emit them.
 func certificateRefMatches(cert *x509.Certificate, ref string) bool {
 	if cert == nil {
 		return false
@@ -390,6 +418,10 @@ func (p *verifyProcessor) stampFailure(lr plog.LogRecord, reason string) {
 }
 
 func (p *verifyProcessor) serializeLogRecord(lr plog.LogRecord) ([]byte, error) {
+	return p.serializePayload(lr, false)
+}
+
+func (p *verifyProcessor) serializePayload(lr plog.LogRecord, includeVerification bool) ([]byte, error) {
 	data := make(map[string]any)
 
 	if lr.EventName() != "" {
@@ -429,7 +461,7 @@ func (p *verifyProcessor) serializeLogRecord(lr plog.LogRecord) ([]byte, error) 
 		if strings.HasPrefix(k, attrIntegrityPrefix) {
 			return true
 		}
-		if strings.HasPrefix(k, "audit.verification.") {
+		if !includeVerification && strings.HasPrefix(k, attrVerificationPrefix) {
 			return true
 		}
 		if err := checkUTF8(k, "attribute key"); err != nil {
@@ -514,8 +546,10 @@ func (p *verifyProcessor) valueToInterface(v pcommon.Value, depth int) (any, err
 			return nil, mapErr
 		}
 		return m, nil
+	case pcommon.ValueTypeEmpty:
+		return map[string]any{}, nil
 	default:
-		return nil, nil
+		return nil, fmt.Errorf("unsupported value type: %s", v.Type())
 	}
 }
 
