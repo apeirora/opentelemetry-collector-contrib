@@ -162,9 +162,15 @@ func (*verifyProcessor) Shutdown(_ context.Context) error {
 	return nil
 }
 
+type recordOutcome struct {
+	fail *verifyFailure
+	id   string
+}
+
 func (p *verifyProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error {
 	resourceLogs := ld.ResourceLogs()
 	var failures []logFailure
+	stamp := p.config.FailureMode == failureModeMark || p.config.FailureMode == failureModeDrop
 
 	for i := 0; i < resourceLogs.Len(); i++ {
 		rl := resourceLogs.At(i)
@@ -180,46 +186,46 @@ func (p *verifyProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error {
 		}
 
 		scopeLogs := rl.ScopeLogs()
+		scopeOutcomes := make([][]recordOutcome, scopeLogs.Len())
 		for j := 0; j < scopeLogs.Len(); j++ {
 			records := scopeLogs.At(j).LogRecords()
-			recordIdx := 0
-			records.RemoveIf(func(lr plog.LogRecord) bool {
-				idx := recordIdx
-				recordIdx++
-
+			outcomes := make([]recordOutcome, records.Len())
+			for k := 0; k < records.Len(); k++ {
+				lr := records.At(k)
 				fail := p.verifyLogRecord(lr, algorithm, certRef)
-				if fail == nil {
-					p.stampSuccess(lr)
-					return false
+				outcomes[k] = recordOutcome{fail: fail, id: recordLogID(lr)}
+				if fail != nil {
+					p.logger.Debug("log record verification failed",
+						zap.String("reason", fail.reason),
+						zap.Error(fail.err),
+					)
+					if p.config.FailureMode != failureModeMark {
+						failures = append(failures, logFailure{
+							logID:    outcomes[k].id,
+							resource: i,
+							scope:    j,
+							record:   k,
+						})
+					}
 				}
+			}
+			scopeOutcomes[j] = outcomes
+		}
 
-				p.logger.Debug("log record verification failed",
-					zap.String("reason", fail.reason),
-					zap.Error(fail.err),
-				)
+		if stamp {
+			p.applyHierarchicalStamps(rl, scopeOutcomes)
+		}
 
-				switch p.config.FailureMode {
-				case failureModeMark:
-					p.stampFailure(lr, fail.reason)
-					return false
-				case failureModeDrop:
-					failures = append(failures, logFailure{
-						logID:    recordLogID(lr),
-						resource: i,
-						scope:    j,
-						record:   idx,
-					})
-					return true
-				default:
-					failures = append(failures, logFailure{
-						logID:    recordLogID(lr),
-						resource: i,
-						scope:    j,
-						record:   idx,
-					})
-					return false
-				}
-			})
+		if p.config.FailureMode == failureModeDrop {
+			for j := 0; j < scopeLogs.Len(); j++ {
+				outcomes := scopeOutcomes[j]
+				recordIdx := 0
+				scopeLogs.At(j).LogRecords().RemoveIf(func(plog.LogRecord) bool {
+					idx := recordIdx
+					recordIdx++
+					return outcomes[idx].fail != nil
+				})
+			}
 		}
 	}
 
@@ -234,6 +240,132 @@ func (p *verifyProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error {
 		return consumererror.NewPermanent(&verificationBatchError{failures: failures})
 	}
 	return nil
+}
+
+// applyHierarchicalStamps writes audit.verification.* at the highest uniform
+// level: resource if every record agrees, else scope if that scope agrees,
+// else each log record when a scope is mixed.
+func (p *verifyProcessor) applyHierarchicalStamps(rl plog.ResourceLogs, scopeOutcomes [][]recordOutcome) {
+	total, failed := 0, 0
+	var firstFailReason string
+	uniformFailReason := true
+	for _, outcomes := range scopeOutcomes {
+		for _, o := range outcomes {
+			total++
+			if o.fail == nil {
+				continue
+			}
+			failed++
+			if firstFailReason == "" {
+				firstFailReason = o.fail.reason
+			} else if o.fail.reason != firstFailReason {
+				uniformFailReason = false
+			}
+		}
+	}
+	if total == 0 {
+		return
+	}
+
+	resAttrs := rl.Resource().Attributes()
+	scopeLogs := rl.ScopeLogs()
+
+	if failed == 0 {
+		p.stampSuccessAttrs(resAttrs)
+		for j := 0; j < scopeLogs.Len(); j++ {
+			p.clearVerificationAttrs(scopeLogs.At(j).Scope().Attributes())
+			p.clearRecordVerificationAttrs(scopeLogs.At(j).LogRecords())
+		}
+		return
+	}
+
+	if failed == total {
+		reason := firstFailReason
+		if !uniformFailReason {
+			reason = ""
+		}
+		p.stampFailureAttrs(resAttrs, reason)
+		for j := 0; j < scopeLogs.Len(); j++ {
+			p.clearVerificationAttrs(scopeLogs.At(j).Scope().Attributes())
+			p.clearRecordVerificationAttrs(scopeLogs.At(j).LogRecords())
+		}
+		return
+	}
+
+	p.clearVerificationAttrs(resAttrs)
+	for j := 0; j < scopeLogs.Len(); j++ {
+		sl := scopeLogs.At(j)
+		outcomes := scopeOutcomes[j]
+		if len(outcomes) == 0 {
+			continue
+		}
+		scopeFailed := 0
+		scopeFirstReason := ""
+		scopeUniform := true
+		for _, o := range outcomes {
+			if o.fail == nil {
+				continue
+			}
+			scopeFailed++
+			if scopeFirstReason == "" {
+				scopeFirstReason = o.fail.reason
+			} else if o.fail.reason != scopeFirstReason {
+				scopeUniform = false
+			}
+		}
+		scopeAttrs := sl.Scope().Attributes()
+		records := sl.LogRecords()
+		switch {
+		case scopeFailed == 0:
+			p.stampSuccessAttrs(scopeAttrs)
+			p.clearRecordVerificationAttrs(records)
+		case scopeFailed == len(outcomes):
+			reason := scopeFirstReason
+			if !scopeUniform {
+				reason = ""
+			}
+			p.stampFailureAttrs(scopeAttrs, reason)
+			p.clearRecordVerificationAttrs(records)
+		default:
+			p.clearVerificationAttrs(scopeAttrs)
+			for k := 0; k < records.Len(); k++ {
+				lr := records.At(k)
+				if outcomes[k].fail == nil {
+					p.stampSuccessAttrs(lr.Attributes())
+				} else {
+					p.stampFailureAttrs(lr.Attributes(), outcomes[k].fail.reason)
+				}
+			}
+		}
+	}
+}
+
+func (p *verifyProcessor) clearRecordVerificationAttrs(records plog.LogRecordSlice) {
+	for i := 0; i < records.Len(); i++ {
+		p.clearVerificationAttrs(records.At(i).Attributes())
+	}
+}
+
+func (*verifyProcessor) clearVerificationAttrs(attrs pcommon.Map) {
+	attrs.RemoveIf(func(k string, _ pcommon.Value) bool {
+		return strings.HasPrefix(k, attrVerificationPrefix)
+	})
+}
+
+func (p *verifyProcessor) stampSuccessAttrs(attrs pcommon.Map) {
+	attrs.PutStr(attrVerificationStatus, statusVerified)
+	attrs.PutStr(attrVerificationProfile, p.config.VerificationProfile)
+	attrs.Remove(attrVerificationReason)
+}
+
+func (p *verifyProcessor) stampFailureAttrs(attrs pcommon.Map, reason string) {
+	attrs.PutStr(attrVerificationStatus, statusFailed)
+	attrs.PutStr(attrVerificationProfile, p.config.VerificationProfile)
+	if reason == "" {
+		attrs.Remove(attrVerificationReason)
+	} else {
+		attrs.PutStr(attrVerificationReason, reason)
+	}
 }
 
 func (p *verifyProcessor) verifyLogRecord(lr plog.LogRecord, algorithm, certRef string) *verifyFailure {
@@ -403,18 +535,6 @@ func certificateMatchesAlgorithm(cert *x509.Certificate, algorithm string) error
 func sha256Sum(b []byte) []byte {
 	sum := sha256.Sum256(b)
 	return sum[:]
-}
-
-func (p *verifyProcessor) stampSuccess(lr plog.LogRecord) {
-	lr.Attributes().PutStr(attrVerificationStatus, statusVerified)
-	lr.Attributes().PutStr(attrVerificationProfile, p.config.VerificationProfile)
-	lr.Attributes().Remove(attrVerificationReason)
-}
-
-func (p *verifyProcessor) stampFailure(lr plog.LogRecord, reason string) {
-	lr.Attributes().PutStr(attrVerificationStatus, statusFailed)
-	lr.Attributes().PutStr(attrVerificationReason, reason)
-	lr.Attributes().PutStr(attrVerificationProfile, p.config.VerificationProfile)
 }
 
 func (p *verifyProcessor) serializeLogRecord(lr plog.LogRecord) ([]byte, error) {
