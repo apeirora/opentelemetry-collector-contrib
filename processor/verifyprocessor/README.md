@@ -191,12 +191,19 @@ Serialization fails with a hard error if the total pre-JCS JSON size exceeds
 
 ## Output attributes
 
-After verification, each log record is stamped with:
+When `failure_mode` is `mark` or `drop`, verification results are stamped with
+the same attribute names at the highest uniform level:
+
+1. All records in a resource agree → stamp the **resource** only.
+2. Otherwise, when all records in a scope agree → stamp that **scope** only.
+3. Otherwise (mixed success/failure in a scope) → stamp **each log record**.
+
+`strict` does not stamp (failed batches are not forwarded).
 
 | Attribute                      | Type   | Description                                                                 |
 |--------------------------------|--------|-----------------------------------------------------------------------------|
-| `audit.verification.status`    | string | `verified` on success. `failed` when `failure_mode` is `mark`.              |
-| `audit.verification.reason`    | string | Machine-readable failure reason; set only when status is `failed`.          |
+| `audit.verification.status`    | string | `verified` or `failed`.                                                     |
+| `audit.verification.reason`    | string | Machine-readable failure reason; set only when status is `failed` and all failures share the same reason. |
 | `audit.verification.profile`   | string | Echo of the configured `verification_profile` (default: `default`).         |
 
 Failure reason codes include: `missing_integrity_value`, `missing_algorithm`,
@@ -204,8 +211,10 @@ Failure reason codes include: `missing_integrity_value`, `missing_algorithm`,
 `key_material_mismatch`, `invalid_signature_encoding`, `integrity_mismatch`,
 `serialization_error`.
 
-These `audit.verification.*` attributes are excluded from the signed payload
-reconstruction so re-verification remains stable.
+Record-level `audit.verification.*` attributes are excluded from the signed
+payload reconstruction (with a one-shot retry that includes them when present)
+so re-verification remains stable. Resource- and scope-level stamps are outside
+the signed log payload.
 
 ## Example pipeline
 
