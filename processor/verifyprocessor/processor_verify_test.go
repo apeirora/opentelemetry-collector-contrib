@@ -4,7 +4,6 @@
 package verifyprocessor
 
 import (
-	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -129,7 +128,7 @@ func TestVerifyRS256HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	lr.Attributes().PutStr(attrIntegrityValue, signRSA(t, key, payload, crypto.SHA256))
 
-	require.NoError(t, p.ConsumeLogs(context.Background(), ld))
+	require.NoError(t, p.ConsumeLogs(t.Context(), ld))
 	requireNoStatus(t, ld.ResourceLogs().At(0).Resource().Attributes())
 	requireNoStatus(t, lr.Attributes())
 }
@@ -145,7 +144,7 @@ func TestVerifyRS512HappyPathAndTamper(t *testing.T) {
 	require.NoError(t, err)
 	lr.Attributes().PutStr(attrIntegrityValue, signRSA(t, key, payload, crypto.SHA512))
 
-	require.NoError(t, p.ConsumeLogs(context.Background(), ld))
+	require.NoError(t, p.ConsumeLogs(t.Context(), ld))
 	requireStatus(t, rl.Resource().Attributes(), statusVerified)
 	requireNoStatus(t, lr.Attributes())
 
@@ -156,7 +155,7 @@ func TestVerifyRS512HappyPathAndTamper(t *testing.T) {
 	require.NoError(t, err)
 	lr2.Attributes().PutStr(attrIntegrityValue, signRSA(t, key, payload2, crypto.SHA256))
 
-	require.NoError(t, p.ConsumeLogs(context.Background(), ld2))
+	require.NoError(t, p.ConsumeLogs(t.Context(), ld2))
 	requireStatus(t, rl2.Resource().Attributes(), statusFailed)
 	reason, ok := rl2.Resource().Attributes().Get(attrVerificationReason)
 	require.True(t, ok)
@@ -188,7 +187,7 @@ func TestVerifyHMACHappyPathAndTamper(t *testing.T) {
 	require.NoError(t, err)
 	lr.Attributes().PutStr(attrIntegrityValue, base64.StdEncoding.EncodeToString(mac.Sum(nil)))
 
-	require.NoError(t, p.ConsumeLogs(context.Background(), ld))
+	require.NoError(t, p.ConsumeLogs(t.Context(), ld))
 	requireStatus(t, ld.ResourceLogs().At(0).Resource().Attributes(), statusVerified)
 	requireNoStatus(t, lr.Attributes())
 
@@ -205,7 +204,7 @@ func TestVerifyHMACHappyPathAndTamper(t *testing.T) {
 
 	sink := &consumertest.LogsSink{}
 	p.nextConsumer = sink
-	err = p.ConsumeLogs(context.Background(), ld2)
+	err = p.ConsumeLogs(t.Context(), ld2)
 	require.Error(t, err)
 	assert.True(t, consumererror.IsPermanent(err))
 	assert.Contains(t, err.Error(), "verification failed for 1 log record(s)")
@@ -240,7 +239,7 @@ func TestDropForwardsGoodAndReportsBadIDs(t *testing.T) {
 	badRec.Attributes().PutStr(attrRecordID, "rec-bad-2")
 	badRec.Attributes().PutStr(attrIntegrityValue, base64.StdEncoding.EncodeToString([]byte("not-the-mac")))
 
-	err = p.ConsumeLogs(context.Background(), ld)
+	err = p.ConsumeLogs(t.Context(), ld)
 	require.Error(t, err)
 	assert.True(t, consumererror.IsPermanent(err))
 	assert.Contains(t, err.Error(), "verification failed for 1 log record(s)")
@@ -276,7 +275,7 @@ func TestStrictRejectsWholeBatch(t *testing.T) {
 	badRec.Attributes().PutStr(attrRecordID, "rec-bad-3")
 	badRec.Attributes().PutStr(attrIntegrityValue, base64.StdEncoding.EncodeToString([]byte("not-the-mac")))
 
-	err = p.ConsumeLogs(context.Background(), ld)
+	err = p.ConsumeLogs(t.Context(), ld)
 	require.Error(t, err)
 	assert.True(t, consumererror.IsPermanent(err))
 	assert.Contains(t, err.Error(), "id=rec-bad-3")
@@ -289,7 +288,7 @@ func TestVerifyMarkFailureMode(t *testing.T) {
 	p := newVerifyProc(t, &Config{FailureMode: failureModeMark, VerificationProfile: "default"}, &staticProvider{hmacKey: hmacKey})
 
 	ld := makeLogs("body", nil, algorithmHMACSHA256, "", "not-valid-base64!!!")
-	require.NoError(t, p.ConsumeLogs(context.Background(), ld))
+	require.NoError(t, p.ConsumeLogs(t.Context(), ld))
 	rl := ld.ResourceLogs().At(0)
 	requireStatus(t, rl.Resource().Attributes(), statusFailed)
 	reason, ok := rl.Resource().Attributes().Get(attrVerificationReason)
@@ -309,7 +308,7 @@ func TestVerifyCertificateMismatch(t *testing.T) {
 	require.NoError(t, err)
 	lr.Attributes().PutStr(attrIntegrityValue, signRSA(t, key, payload, crypto.SHA256))
 
-	require.NoError(t, p.ConsumeLogs(context.Background(), ld))
+	require.NoError(t, p.ConsumeLogs(t.Context(), ld))
 	reason, ok := ld.ResourceLogs().At(0).Resource().Attributes().Get(attrVerificationReason)
 	require.True(t, ok)
 	assert.Equal(t, reasonCertificateMismatch, reason.Str())
@@ -320,7 +319,7 @@ func TestVerifyKeyMaterialMismatchWrongKeyType(t *testing.T) {
 	p := newVerifyProc(t, &Config{FailureMode: failureModeMark, VerificationProfile: "default"}, &staticProvider{cert: cert})
 
 	ld := makeLogs("hello", nil, algorithmES256, fingerprint(cert), "YWJjZA==")
-	require.NoError(t, p.ConsumeLogs(context.Background(), ld))
+	require.NoError(t, p.ConsumeLogs(t.Context(), ld))
 	rl := ld.ResourceLogs().At(0)
 	requireStatus(t, rl.Resource().Attributes(), statusFailed)
 	reason, ok := rl.Resource().Attributes().Get(attrVerificationReason)
@@ -353,7 +352,7 @@ func TestVerifyES256AndEdDSA(t *testing.T) {
 		sig, err := ecdsa.SignASN1(rand.Reader, key, sum[:])
 		require.NoError(t, err)
 		lr.Attributes().PutStr(attrIntegrityValue, base64.StdEncoding.EncodeToString(sig))
-		require.NoError(t, p.ConsumeLogs(context.Background(), ld))
+		require.NoError(t, p.ConsumeLogs(t.Context(), ld))
 	})
 
 	t.Run("EdDSA", func(t *testing.T) {
@@ -377,7 +376,7 @@ func TestVerifyES256AndEdDSA(t *testing.T) {
 		require.NoError(t, err)
 		sig := ed25519.Sign(priv, payload)
 		lr.Attributes().PutStr(attrIntegrityValue, base64.StdEncoding.EncodeToString(sig))
-		require.NoError(t, p.ConsumeLogs(context.Background(), ld))
+		require.NoError(t, p.ConsumeLogs(t.Context(), ld))
 	})
 }
 
@@ -423,13 +422,13 @@ func TestFileAndEnvProviders(t *testing.T) {
 }
 
 func TestStubProvidersNotImplemented(t *testing.T) {
-	_, err := newKeyMaterialProvider(context.Background(), &Config{
+	_, err := newKeyMaterialProvider(t.Context(), &Config{
 		KeySource: KeySourceConfig{Type: keySourceK8sSecret, K8sSecret: &K8sSecretConfig{Name: "n", SecretConfig: SecretConfig{HMACKey: "k"}}},
 	}, zap.NewNop())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not yet implemented")
 
-	_, err = newKeyMaterialProvider(context.Background(), &Config{
+	_, err = newKeyMaterialProvider(t.Context(), &Config{
 		KeySource: KeySourceConfig{Type: keySourceBao, Bao: &BaoKeyConfig{SecretPath: "p", SecretConfig: SecretConfig{HMACKey: "k"}}},
 	}, zap.NewNop())
 	require.Error(t, err)
@@ -443,7 +442,7 @@ func TestFactoryCreateWithFileHMAC(t *testing.T) {
 		Type: keySourceFile,
 		File: &FileKeyConfig{HMACKey: "testdata/dev_hmac_key.txt"},
 	}
-	proc, err := factory.CreateLogs(context.Background(), processortest.NewNopSettings(typ), cfg, consumertest.NewNop())
+	proc, err := factory.CreateLogs(t.Context(), processortest.NewNopSettings(typ), cfg, consumertest.NewNop())
 	require.NoError(t, err)
 	assert.True(t, proc.Capabilities().MutatesData)
 }
@@ -491,7 +490,7 @@ func TestHierarchicalStamping(t *testing.T) {
 		bad.Body().SetStr("b")
 		signOK(t, bad)
 
-		require.NoError(t, p.ConsumeLogs(context.Background(), ld))
+		require.NoError(t, p.ConsumeLogs(t.Context(), ld))
 		requireStatus(t, rl.Resource().Attributes(), statusVerified)
 		requireNoStatus(t, rl.ScopeLogs().At(0).Scope().Attributes())
 		requireNoStatus(t, records.At(0).Attributes())
@@ -503,7 +502,7 @@ func TestHierarchicalStamping(t *testing.T) {
 		rl := ld.ResourceLogs().At(0)
 		rl.ScopeLogs().At(0).LogRecords().AppendEmpty().Attributes().PutStr(attrIntegrityValue, "YmFk")
 
-		require.NoError(t, p.ConsumeLogs(context.Background(), ld))
+		require.NoError(t, p.ConsumeLogs(t.Context(), ld))
 		requireStatus(t, rl.Resource().Attributes(), statusFailed)
 		requireNoStatus(t, rl.ScopeLogs().At(0).Scope().Attributes())
 		requireNoStatus(t, rl.ScopeLogs().At(0).LogRecords().At(0).Attributes())
@@ -520,7 +519,7 @@ func TestHierarchicalStamping(t *testing.T) {
 		failRec.Body().SetStr("bad")
 		failRec.Attributes().PutStr(attrIntegrityValue, "YmFk")
 
-		require.NoError(t, p.ConsumeLogs(context.Background(), ld))
+		require.NoError(t, p.ConsumeLogs(t.Context(), ld))
 		requireNoStatus(t, rl.Resource().Attributes())
 		requireStatus(t, okScope.Scope().Attributes(), statusVerified)
 		requireNoStatus(t, okScope.LogRecords().At(0).Attributes())
@@ -537,7 +536,7 @@ func TestHierarchicalStamping(t *testing.T) {
 		bad.Body().SetStr("bad")
 		bad.Attributes().PutStr(attrIntegrityValue, "YmFk")
 
-		require.NoError(t, p.ConsumeLogs(context.Background(), ld))
+		require.NoError(t, p.ConsumeLogs(t.Context(), ld))
 		requireNoStatus(t, rl.Resource().Attributes())
 		requireNoStatus(t, rl.ScopeLogs().At(0).Scope().Attributes())
 		requireStatus(t, records.At(0).Attributes(), statusVerified)
@@ -556,7 +555,7 @@ func TestVerificationStampsAcrossResignChain(t *testing.T) {
 		payload, err := p.serializeLogRecord(lr)
 		require.NoError(t, err)
 		lr.Attributes().PutStr(attrIntegrityValue, hmacSign(t, hmacKey, payload))
-		require.NoError(t, p.ConsumeLogs(context.Background(), ld))
+		require.NoError(t, p.ConsumeLogs(t.Context(), ld))
 		requireStatus(t, rl.Resource().Attributes(), statusVerified)
 		requireNoStatus(t, lr.Attributes())
 		return ld, rl, lr
@@ -564,7 +563,7 @@ func TestVerificationStampsAcrossResignChain(t *testing.T) {
 
 	t.Run("verify then verify", func(t *testing.T) {
 		ld, rl, lr := newSignedLogs(t)
-		require.NoError(t, p.ConsumeLogs(context.Background(), ld))
+		require.NoError(t, p.ConsumeLogs(t.Context(), ld))
 		requireStatus(t, rl.Resource().Attributes(), statusVerified)
 		requireNoStatus(t, lr.Attributes())
 	})
@@ -574,7 +573,7 @@ func TestVerificationStampsAcrossResignChain(t *testing.T) {
 		payload, err := p.serializePayload(lr, true)
 		require.NoError(t, err)
 		lr.Attributes().PutStr(attrIntegrityValue, hmacSign(t, hmacKey, payload))
-		require.NoError(t, p.ConsumeLogs(context.Background(), ld))
+		require.NoError(t, p.ConsumeLogs(t.Context(), ld))
 		requireStatus(t, rl.Resource().Attributes(), statusVerified)
 		requireNoStatus(t, lr.Attributes())
 	})
@@ -595,7 +594,7 @@ func TestVerificationStampsAcrossResignChain(t *testing.T) {
 		bad := records.AppendEmpty()
 		bad.Body().SetStr("bad")
 		bad.Attributes().PutStr(attrIntegrityValue, "YmFk")
-		require.NoError(t, p.ConsumeLogs(context.Background(), ld))
+		require.NoError(t, p.ConsumeLogs(t.Context(), ld))
 		requireStatus(t, ok.Attributes(), statusVerified)
 
 		stampedPayload, err := p.serializePayload(ok, true)
@@ -603,7 +602,7 @@ func TestVerificationStampsAcrossResignChain(t *testing.T) {
 		ok.Attributes().PutStr(attrIntegrityValue, hmacSign(t, hmacKey, stampedPayload))
 		ok.Attributes().PutStr(attrVerificationProfile, "forged")
 
-		require.NoError(t, p.ConsumeLogs(context.Background(), ld))
+		require.NoError(t, p.ConsumeLogs(t.Context(), ld))
 		requireStatus(t, ok.Attributes(), statusFailed)
 		reason, _ := ok.Attributes().Get(attrVerificationReason)
 		assert.Equal(t, reasonIntegrityMismatch, reason.Str())
@@ -616,7 +615,7 @@ func TestVerificationStampsAcrossResignChain(t *testing.T) {
 		require.NoError(t, err)
 		lr.Attributes().PutStr(attrIntegrityValue, hmacSign(t, hmacKey, payload))
 		lr.Body().SetStr("tampered")
-		require.NoError(t, p.ConsumeLogs(context.Background(), ld))
+		require.NoError(t, p.ConsumeLogs(t.Context(), ld))
 		requireStatus(t, rl.Resource().Attributes(), statusFailed)
 	})
 }
