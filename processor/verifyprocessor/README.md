@@ -43,7 +43,7 @@ processors:
     mode: sync
 
     # How to handle verification failures. Default: strict.
-    # - strict: reject the whole batch (export nothing), return a permanent error
+    # - strict: reject the whole batch (export nothing) on verification failure, return a permanent error
     # - drop:   drop failed records, export the rest, return a permanent error
     # - mark:   annotate failed records and continue
     failure_mode: strict
@@ -101,8 +101,8 @@ either a certificate or an HMAC secret, not both.
 
 | Provider | `certificate` / `hmac_key` mean | Description |
 | --- | --- | --- |
-| `file` | Local file paths | Reads a PEM certificate or a standard base64-encoded HMAC secret from disk. Supports plain PEM and base64-encoded PEM for certificates. |
-| `env` | Key material (usually via `${env:}`) | Holds resolved PEM / standard base64-encoded HMAC strings from Collector confmap `${env:VAR}` expansion (not env-var names). |
+| `file` | Local file paths | Reads a PEM certificate or an HMAC secret from disk. HMAC content is standard base64, or the raw secret when that decode fails. Certificates may be plain PEM or base64-encoded PEM. |
+| `env` | Key material (usually via `${env:}`) | Holds resolved PEM or HMAC strings from Collector confmap `${env:VAR}` expansion (not env-var names). HMAC content is standard base64, or the raw secret when that decode fails. |
 | `k8s_secret` | Keys inside the Secret | Reads a Kubernetes Secret by name/namespace via the in-cluster or kubeconfig client. |
 | `bao` | Fields inside the secret | Reads key material from an [OpenBao](https://openbao.org/) KV v2 secrets engine via [`github.com/openbao/openbao/api/v2`](https://pkg.go.dev/github.com/openbao/openbao/api/v2) (`mount_path` default `secret`, `secret_path` relative to that mount). |
 

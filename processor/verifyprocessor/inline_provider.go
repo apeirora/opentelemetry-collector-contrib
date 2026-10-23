@@ -4,10 +4,8 @@
 package verifyprocessor // import "github.com/open-telemetry/opentelemetry-collector-contrib/processor/verifyprocessor"
 
 import (
-	"encoding/base64"
 	"errors"
 	"fmt"
-	"strings"
 )
 
 type inlineKeyMaterialProvider struct {
@@ -16,12 +14,9 @@ type inlineKeyMaterialProvider struct {
 
 func newInlineKeyMaterialProvider(cfg *EnvKeyConfig) (KeyMaterialProvider, error) {
 	if cfg.HMACKey != "" {
-		key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(cfg.HMACKey))
+		key, err := decodeHMACKey(cfg.HMACKey)
 		if err != nil {
-			return nil, fmt.Errorf("env.hmac_key: must be standard base64-encoded: %w", err)
-		}
-		if len(key) == 0 {
-			return nil, errors.New("env.hmac_key: empty after base64 decoding")
+			return nil, fmt.Errorf("env.hmac_key: %w", err)
 		}
 		return &inlineKeyMaterialProvider{baseKeyMaterialProvider{hmacKey: key}}, nil
 	}
