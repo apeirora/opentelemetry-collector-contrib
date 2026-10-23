@@ -96,13 +96,10 @@ type verificationBatchError struct {
 
 func (e *verificationBatchError) Error() string {
 	n := len(e.failures)
-	shown := n
-	if shown > maxFailureDetails {
-		shown = maxFailureDetails
-	}
+	shown := min(n, maxFailureDetails)
 	parts := make([]string, 0, shown+1)
 	parts = append(parts, fmt.Sprintf("verification failed for %d log record(s)", n))
-	for i := 0; i < shown; i++ {
+	for i := range shown {
 		parts = append(parts, e.failures[i].String())
 	}
 	if n > shown {

@@ -46,7 +46,7 @@ func createLogsProcessor(
 	return proc, nil
 }
 
-func newKeyMaterialProvider(ctx context.Context, cfg *Config, logger *zap.Logger) (KeyMaterialProvider, error) {
+func newKeyMaterialProvider(_ context.Context, cfg *Config, logger *zap.Logger) (KeyMaterialProvider, error) {
 	switch cfg.KeySource.Type {
 	case keySourceK8sSecret:
 		logger.Info("Kubernetes Secret key material provider is not yet implemented")
