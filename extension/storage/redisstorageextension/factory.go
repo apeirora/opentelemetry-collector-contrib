@@ -5,6 +5,7 @@ package redisstorageextension // import "github.com/open-telemetry/opentelemetry
 
 import (
 	"context"
+	"time"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config/configtls"
@@ -28,6 +29,15 @@ func createDefaultConfig() component.Config {
 		TLS: configtls.ClientConfig{
 			Insecure: false,
 		},
+		MaxRetries:      10,
+		RetryDelay:      2 * time.Second,
+		DialTimeout:     30 * time.Second,
+		ReadTimeout:     30 * time.Second,
+		WriteTimeout:    30 * time.Second,
+		PoolTimeout:     30 * time.Second,
+		MinRetryBackoff: 100 * time.Millisecond,
+		MaxRetryBackoff: 2 * time.Second,
+		PingTimeout:     30 * time.Second,
 	}
 }
 
