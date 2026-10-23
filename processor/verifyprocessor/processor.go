@@ -94,6 +94,22 @@ type verificationBatchError struct {
 	failures []logFailure
 }
 
+// consumeLogsError reports a downstream export failure together with the
+// verification failures from the same batch. Unwrap returns only the export
+// error so permanence follows the exporter.
+type consumeLogsError struct {
+	export error
+	verify error
+}
+
+func (e *consumeLogsError) Error() string {
+	return e.export.Error() + "; " + e.verify.Error()
+}
+
+func (e *consumeLogsError) Unwrap() error {
+	return e.export
+}
+
 func (e *verificationBatchError) Error() string {
 	n := len(e.failures)
 	shown := min(n, maxFailureDetails)
@@ -231,7 +247,13 @@ func (p *verifyProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error {
 	}
 
 	if err := p.nextConsumer.ConsumeLogs(ctx, ld); err != nil {
-		return err
+		if len(failures) == 0 {
+			return err
+		}
+		return &consumeLogsError{
+			export: err,
+			verify: consumererror.NewPermanent(&verificationBatchError{failures: failures}),
+		}
 	}
 	if len(failures) > 0 {
 		return consumererror.NewPermanent(&verificationBatchError{failures: failures})
@@ -411,7 +433,7 @@ func (p *verifyProcessor) verifyLogRecord(lr plog.LogRecord, algorithm, certRef 
 	if err == nil {
 		return nil
 	}
-	if !hasVerificationAttrs(lr) {
+	if !hasVerificationAttrs(lr) || !p.verificationProfileMatches(lr) {
 		return &verifyFailure{reason: reasonIntegrityMismatch, err: err}
 	}
 
@@ -428,6 +450,14 @@ func (p *verifyProcessor) verifyLogRecord(lr plog.LogRecord, algorithm, certRef 
 // hasVerificationAttrs reports whether a previous verifyprocessor stamped the
 // record. A signer placed after that verifier signs over those stamps, so the
 // payload must be rebuilt with them included to match its signature.
+func (p *verifyProcessor) verificationProfileMatches(lr plog.LogRecord) bool {
+	v, ok := lr.Attributes().Get(attrVerificationProfile)
+	if !ok {
+		return false
+	}
+	return v.Str() == p.config.VerificationProfile
+}
+
 func hasVerificationAttrs(lr plog.LogRecord) bool {
 	found := false
 	lr.Attributes().Range(func(k string, _ pcommon.Value) bool {
