@@ -197,6 +197,7 @@ func (p *verifyProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error {
 		if v, ok := resAttrs.Get(attrIntegrityCertificate); ok {
 			certRef = v.Str()
 		}
+		resourceFail := p.checkResourceKeyMaterial(algorithm, certRef)
 
 		scopeLogs := rl.ScopeLogs()
 		scopeOutcomes := make([][]recordOutcome, scopeLogs.Len())
@@ -205,7 +206,10 @@ func (p *verifyProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error {
 			outcomes := make([]recordOutcome, records.Len())
 			for k := 0; k < records.Len(); k++ {
 				lr := records.At(k)
-				fail := p.verifyLogRecord(lr, algorithm, certRef)
+				fail := resourceFail
+				if fail == nil {
+					fail = p.verifyLogRecord(lr, algorithm)
+				}
 				outcomes[k] = recordOutcome{fail: fail, id: recordLogID(lr)}
 				if fail != nil {
 					p.logger.Debug("log record verification failed",
@@ -387,16 +391,10 @@ func (p *verifyProcessor) stampFailureAttrs(attrs pcommon.Map, reason string) {
 	}
 }
 
-func (p *verifyProcessor) verifyLogRecord(lr plog.LogRecord, algorithm, certRef string) *verifyFailure {
-	sigVal, ok := lr.Attributes().Get(attrIntegrityValue)
-	if !ok || sigVal.Str() == "" {
-		return &verifyFailure{reason: reasonMissingIntegrityValue}
-	}
-
+func (p *verifyProcessor) checkResourceKeyMaterial(algorithm, certRef string) *verifyFailure {
 	if algorithm == "" {
 		return &verifyFailure{reason: reasonMissingAlgorithm}
 	}
-
 	switch algorithm {
 	case algorithmRS256, algorithmRS512, algorithmES256, algorithmEdDSA:
 		if p.provider.GetCertificate() == nil {
@@ -417,6 +415,14 @@ func (p *verifyProcessor) verifyLogRecord(lr plog.LogRecord, algorithm, certRef 
 		}
 	default:
 		return &verifyFailure{reason: reasonUnsupportedAlgorithm, err: fmt.Errorf("algorithm %q", algorithm)}
+	}
+	return nil
+}
+
+func (p *verifyProcessor) verifyLogRecord(lr plog.LogRecord, algorithm string) *verifyFailure {
+	sigVal, ok := lr.Attributes().Get(attrIntegrityValue)
+	if !ok || sigVal.Str() == "" {
+		return &verifyFailure{reason: reasonMissingIntegrityValue}
 	}
 
 	payload, err := p.serializeLogRecord(lr)

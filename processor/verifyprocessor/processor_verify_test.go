@@ -385,6 +385,97 @@ func TestVerifyKeyMaterialMismatchWrongKeyType(t *testing.T) {
 	requireNoStatus(t, rl.ScopeLogs().At(0).LogRecords().At(0).Attributes())
 }
 
+func TestResourceKeyMaterialFailureAppliesToAllRecords(t *testing.T) {
+	p := newVerifyProc(t, &Config{FailureMode: failureModeMark, VerificationProfile: "default"}, &staticProvider{hmacKey: []byte("k")})
+
+	ld := makeLogs("a", map[string]string{attrRecordID: "a"}, "", "", "YWJjZA==")
+	rl := ld.ResourceLogs().At(0)
+	lr2 := rl.ScopeLogs().At(0).LogRecords().AppendEmpty()
+	lr2.Body().SetStr("b")
+	lr2.Attributes().PutStr(attrRecordID, "b")
+	lr2.Attributes().PutStr(attrIntegrityValue, "YWJjZA==")
+
+	require.NoError(t, p.ConsumeLogs(t.Context(), ld))
+	requireStatus(t, rl.Resource().Attributes(), statusFailed)
+	reason, ok := rl.Resource().Attributes().Get(attrVerificationReason)
+	require.True(t, ok)
+	assert.Equal(t, reasonMissingAlgorithm, reason.Str())
+	requireNoStatus(t, rl.ScopeLogs().At(0).LogRecords().At(0).Attributes())
+	requireNoStatus(t, rl.ScopeLogs().At(0).LogRecords().At(1).Attributes())
+}
+
+func TestMissingCertificateFailsWholeResource(t *testing.T) {
+	_, cert, _ := newTestRSA(t)
+	p := newVerifyProc(t, &Config{FailureMode: failureModeDrop, VerificationProfile: "default"}, &staticProvider{cert: cert})
+
+	ld := makeLogs("a", map[string]string{attrRecordID: "a"}, algorithmRS256, "", "YWJjZA==")
+	rl := ld.ResourceLogs().At(0)
+	lr2 := rl.ScopeLogs().At(0).LogRecords().AppendEmpty()
+	lr2.Body().SetStr("b")
+	lr2.Attributes().PutStr(attrRecordID, "b")
+	lr2.Attributes().PutStr(attrIntegrityValue, "YWJjZA==")
+
+	sink := &consumertest.LogsSink{}
+	p.nextConsumer = sink
+
+	err := p.ConsumeLogs(t.Context(), ld)
+	require.Error(t, err)
+	assert.True(t, consumererror.IsPermanent(err))
+	assert.Equal(t, 0, rl.ScopeLogs().At(0).LogRecords().Len())
+	assert.Equal(t, 0, sink.LogRecordCount())
+	assert.Contains(t, err.Error(), "verification failed for 2 log record(s)")
+	assert.Contains(t, err.Error(), "id=a")
+	assert.Contains(t, err.Error(), "id=b")
+}
+
+func TestStrictReportsEveryFailingResource(t *testing.T) {
+	hmacKey := []byte("strict-key")
+	p := newVerifyProc(t, &Config{FailureMode: failureModeStrict, VerificationProfile: "default"}, &staticProvider{hmacKey: hmacKey})
+	sink := &consumertest.LogsSink{}
+	p.nextConsumer = sink
+
+	ld := makeLogs("a", nil, "", "", "YWJjZA==")
+	second := ld.ResourceLogs().AppendEmpty()
+	second.Resource().Attributes().PutStr(attrIntegrityAlgorithm, algorithmHMACSHA256)
+	second.ScopeLogs().AppendEmpty().LogRecords().AppendEmpty().Body().SetStr("b")
+
+	err := p.ConsumeLogs(t.Context(), ld)
+	require.Error(t, err)
+	assert.True(t, consumererror.IsPermanent(err))
+	assert.Contains(t, err.Error(), "verification failed for 2 log record(s)")
+	assert.Contains(t, err.Error(), "record[0,0,0]")
+	assert.Contains(t, err.Error(), "record[1,0,0]")
+	assert.Equal(t, 0, sink.LogRecordCount())
+}
+
+func TestDropKeepsHealthyResourceWhenAnotherFails(t *testing.T) {
+	hmacKey := []byte("drop-key")
+	p := newVerifyProc(t, &Config{FailureMode: failureModeDrop, VerificationProfile: "default"}, &staticProvider{hmacKey: hmacKey})
+	sink := &consumertest.LogsSink{}
+	p.nextConsumer = sink
+
+	ld := makeLogs("bad", nil, "", "", "YWJjZA==")
+	good := ld.ResourceLogs().AppendEmpty()
+	good.Resource().Attributes().PutStr(attrIntegrityAlgorithm, algorithmHMACSHA256)
+	lr := good.ScopeLogs().AppendEmpty().LogRecords().AppendEmpty()
+	lr.Body().SetStr("good")
+	payload, err := p.serializeLogRecord(lr)
+	require.NoError(t, err)
+	mac := hmac.New(sha256.New, hmacKey)
+	_, err = mac.Write(payload)
+	require.NoError(t, err)
+	lr.Attributes().PutStr(attrIntegrityValue, base64.StdEncoding.EncodeToString(mac.Sum(nil)))
+
+	err = p.ConsumeLogs(t.Context(), ld)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "record[0,0,0]")
+	assert.Equal(t, 1, sink.LogRecordCount())
+	exported := sink.AllLogs()[0].ResourceLogs()
+	require.Equal(t, 2, exported.Len())
+	assert.Equal(t, 0, exported.At(0).ScopeLogs().At(0).LogRecords().Len())
+	assert.Equal(t, 1, exported.At(1).ScopeLogs().At(0).LogRecords().Len())
+}
+
 func TestVerifyES256AndEdDSA(t *testing.T) {
 	t.Run("ES256", func(t *testing.T) {
 		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
