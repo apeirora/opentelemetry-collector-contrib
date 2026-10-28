@@ -340,8 +340,10 @@ func (p *signingProcessor) valueToInterface(v pcommon.Value, depth int) (any, er
 			return nil, mapErr
 		}
 		return m, nil
+	case pcommon.ValueTypeEmpty:
+		return map[string]any{}, nil
 	default:
-		return nil, nil
+		return nil, fmt.Errorf("unsupported value type: %s", v.Type())
 	}
 }
 
