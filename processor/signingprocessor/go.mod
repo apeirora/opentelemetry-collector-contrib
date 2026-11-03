@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/open-telemetry/opentelemetry-collector-contrib/internal/canonicaljson v0.0.0
 	github.com/openbao/openbao/api/v2 v2.7.1
+	github.com/probityai/agent-evidence-vectors/jcsvectors v0.1.0
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/collector/component v1.71.0
 	go.opentelemetry.io/collector/component/componenttest v0.165.0
