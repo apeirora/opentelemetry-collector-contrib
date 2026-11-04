@@ -1,10 +1,11 @@
 module github.com/open-telemetry/opentelemetry-collector-contrib/processor/verifyprocessor
 
-go 1.26.0
+go 1.27.3
 
 require (
 	github.com/gowebpki/jcs v1.0.2
 	github.com/openbao/openbao/api/v2 v2.7.1
+	github.com/open-telemetry/opentelemetry-collector-contrib/internal/canonicaljson v0.0.0-00010101000000-000000000000
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/collector/component v1.71.1-0.20261112225459-4888f0b280f9
 	go.opentelemetry.io/collector/component/componenttest v0.165.1-0.20261112225459-4888f0b280f9
@@ -57,6 +58,7 @@ require (
 	github.com/hashicorp/go-secure-stdlib/parseutil v0.2.0 // indirect
 	github.com/hashicorp/go-secure-stdlib/strutil v0.1.2 // indirect
 	github.com/hashicorp/go-sockaddr v1.0.7 // indirect
+	github.com/gowebpki/jcs v1.0.2 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect
 	github.com/hashicorp/hcl v1.0.1-vault-7 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
@@ -109,3 +111,5 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
+
+replace github.com/open-telemetry/opentelemetry-collector-contrib/internal/canonicaljson => ../../internal/canonicaljson
