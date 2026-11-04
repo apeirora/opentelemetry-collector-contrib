@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/canonicaljson"
+
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 )
@@ -139,7 +141,7 @@ func TestBodyNestingDepthIsCapped(t *testing.T) {
 	p := &signingProcessor{config: &Config{}}
 	lr := plog.NewLogRecord()
 	m := lr.Body().SetEmptyMap()
-	for range jsonMaxDepth + 1 {
+	for range canonicaljson.DefaultMaxDepth + 1 {
 		m = m.PutEmptyMap("n")
 	}
 	_, err := p.serializeLogRecord(lr)

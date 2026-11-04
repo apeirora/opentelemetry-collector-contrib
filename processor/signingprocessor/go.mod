@@ -1,9 +1,10 @@
 module github.com/open-telemetry/opentelemetry-collector-contrib/processor/signingprocessor
 
-go 1.26.0
+go 1.27.3
 
 require (
 	github.com/gowebpki/jcs v1.0.2
+	github.com/open-telemetry/opentelemetry-collector-contrib/internal/canonicaljson v0.0.0
 	github.com/openbao/openbao/api/v2 v2.7.1
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/collector/component v1.71.0
@@ -105,3 +106,5 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
+
+replace github.com/open-telemetry/opentelemetry-collector-contrib/internal/canonicaljson => ../../internal/canonicaljson

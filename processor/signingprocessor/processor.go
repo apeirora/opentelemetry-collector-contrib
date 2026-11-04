@@ -14,34 +14,18 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"hash"
-	"strconv"
-	"strings"
-	"unicode/utf8"
 
-	"github.com/gowebpki/jcs"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/processor"
 	"go.uber.org/zap"
-)
 
-const (
-	// jsonMaxDepth caps recursion in valueToInterface, which walks OTLP
-	// Slice/Map values onto the Go call stack. A fatal stack overflow from
-	// deep nesting cannot be caught by recover(); the Go runtime kills the
-	// collector at roughly 700k–800k levels for json.Marshal and somewhat
-	// higher for valueToInterface itself. 128 is a conservative cap for
-	// operator-supplied data; legitimate attribute nesting rarely exceeds
-	// single digits.
-	jsonMaxDepth = 128
-	// jsonMaxInputBytes caps the serialized JSON size before JCS canonicalization.
-	jsonMaxInputBytes = 1 << 21 // 2 MiB
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/canonicaljson"
 )
 
 type signingProcessor struct {
@@ -138,7 +122,11 @@ func (p *signingProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error 
 //   - Flags (W3C trace-context sampling bit; observability concept, not audit-relevant;
 //     may be modified by intermediaries without breaking audit semantics)
 func (p *signingProcessor) processLogRecord(lr plog.LogRecord) error {
-	logData, err := p.serializeLogRecord(lr)
+	opts := canonicaljson.SerializeLogRecordOptions{
+		ExcludePrefixes: []string{"audit.integrity."},
+		// Uses default MaxDepth (128) and MaxInputBytes (2 MiB)
+	}
+	logData, err := canonicaljson.SerializeLogRecord(lr, opts)
 	if err != nil {
 		return fmt.Errorf("failed to serialize log record: %w", err)
 	}
@@ -151,6 +139,21 @@ func (p *signingProcessor) processLogRecord(lr plog.LogRecord) error {
 	lr.Attributes().PutStr("audit.integrity.value", base64.StdEncoding.EncodeToString(signature))
 	lr.Attributes().PutStr("audit.integrity.signer", "collector")
 	return nil
+}
+
+// serializeLogRecord is a test helper that wraps canonicaljson.SerializeLogRecord
+// with the signing processor's default options.
+func (*signingProcessor) serializeLogRecord(lr plog.LogRecord) ([]byte, error) {
+	opts := canonicaljson.SerializeLogRecordOptions{
+		ExcludePrefixes: []string{"audit.integrity."},
+	}
+	return canonicaljson.SerializeLogRecord(lr, opts)
+}
+
+// valueToInterface is a test helper that wraps the canonicaljson conversion function.
+func (*signingProcessor) valueToInterface(v pcommon.Value, depth int) (any, error) {
+	// Use default max depth from canonicaljson
+	return canonicaljson.ValueToInterface(v, depth, canonicaljson.DefaultMaxDepth)
 }
 
 // sign produces a signature over payload using the configured JWA algorithm.
@@ -208,153 +211,6 @@ func (p *signingProcessor) sign(payload []byte) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("unsupported algorithm: %s", p.config.Algorithm)
 	}
-}
-
-// serializeLogRecord produces a canonical JSON representation of the log record
-// for signing. Excluded from the signed payload:
-//   - audit.integrity.* attributes (carry the proof; must not be part of the input)
-//   - SeverityNumber, SeverityText (SHOULD NOT be set on audit records per spec)
-//   - Flags (W3C trace-context sampling bit; not audit-relevant)
-func (p *signingProcessor) serializeLogRecord(lr plog.LogRecord) ([]byte, error) {
-	data := make(map[string]any)
-
-	if lr.EventName() != "" {
-		if err := checkUTF8(lr.EventName(), "event name"); err != nil {
-			return nil, err
-		}
-		data["event_name"] = lr.EventName()
-	}
-
-	if lr.Body().Type() != pcommon.ValueTypeEmpty {
-		body, err := p.valueToInterface(lr.Body(), 0)
-		if err != nil {
-			return nil, fmt.Errorf("log record body: %w", err)
-		}
-		data["body"] = body
-	}
-
-	if lr.Timestamp() != 0 {
-		data["timestamp"] = strconv.FormatInt(lr.Timestamp().AsTime().UnixNano(), 10)
-	}
-
-	if lr.ObservedTimestamp() != 0 {
-		data["observed_timestamp"] = strconv.FormatInt(lr.ObservedTimestamp().AsTime().UnixNano(), 10)
-	}
-
-	if !lr.TraceID().IsEmpty() {
-		data["trace_id"] = lr.TraceID().String()
-	}
-
-	if !lr.SpanID().IsEmpty() {
-		data["span_id"] = lr.SpanID().String()
-	}
-
-	attrs := make(map[string]any)
-	var attrErr error
-	lr.Attributes().Range(func(k string, v pcommon.Value) bool {
-		if strings.HasPrefix(k, "audit.integrity.") {
-			return true
-		}
-		if err := checkUTF8(k, "attribute key"); err != nil {
-			attrErr = err
-			return false
-		}
-		val, err := p.valueToInterface(v, 0)
-		if err != nil {
-			attrErr = err
-			return false
-		}
-		attrs[k] = val
-		return true
-	})
-	if attrErr != nil {
-		return nil, attrErr
-	}
-	if len(attrs) > 0 {
-		data["attributes"] = attrs
-	}
-
-	return p.marshalJCS(data)
-}
-
-// marshalJCS produces a RFC 8785 (JCS) canonical JSON byte slice.
-// json.Marshal sorts map keys (Go ≥ 1.12), then jcs.Transform normalises
-// number representation and validates the result per the JCS spec.
-func (*signingProcessor) marshalJCS(v any) ([]byte, error) {
-	raw, err := json.Marshal(v)
-	if err != nil {
-		return nil, err
-	}
-	if len(raw) > jsonMaxInputBytes {
-		return nil, fmt.Errorf("serialized log record exceeds size limit (%d > %d bytes)", len(raw), jsonMaxInputBytes)
-	}
-	return jcs.Transform(raw)
-}
-
-func (p *signingProcessor) valueToInterface(v pcommon.Value, depth int) (any, error) {
-	if depth > jsonMaxDepth {
-		return nil, fmt.Errorf("value exceeds nesting depth limit (%d)", jsonMaxDepth)
-	}
-	switch v.Type() {
-	case pcommon.ValueTypeStr:
-		s := v.Str()
-		if err := checkUTF8(s, "string value"); err != nil {
-			return nil, err
-		}
-		return map[string]any{"stringValue": s}, nil
-	case pcommon.ValueTypeInt:
-		return map[string]any{"intValue": strconv.FormatInt(v.Int(), 10)}, nil
-	case pcommon.ValueTypeDouble:
-		return map[string]any{"doubleValue": v.Double()}, nil
-	case pcommon.ValueTypeBool:
-		return map[string]any{"boolValue": v.Bool()}, nil
-	case pcommon.ValueTypeBytes:
-		return map[string]any{"bytesValue": base64.StdEncoding.EncodeToString(v.Bytes().AsRaw())}, nil
-	case pcommon.ValueTypeSlice:
-		slice := make([]any, v.Slice().Len())
-		for i := 0; i < v.Slice().Len(); i++ {
-			val, err := p.valueToInterface(v.Slice().At(i), depth+1) // recursive call!
-			if err != nil {
-				return nil, err
-			}
-			slice[i] = val
-		}
-		return slice, nil
-	case pcommon.ValueTypeMap:
-		m := make(map[string]any)
-		var mapErr error
-		v.Map().Range(func(k string, val pcommon.Value) bool {
-			if err := checkUTF8(k, "map key"); err != nil {
-				mapErr = err
-				return false
-			}
-			converted, err := p.valueToInterface(val, depth+1) // recursive call!
-			if err != nil {
-				mapErr = err
-				return false
-			}
-			m[k] = converted
-			return true
-		})
-		if mapErr != nil {
-			return nil, mapErr
-		}
-		return m, nil
-	default:
-		return nil, nil
-	}
-}
-
-// checkUTF8 refuses a string that is not valid UTF-8. json.Marshal would
-// otherwise replace each invalid byte with U+FFFD, so two records that differ
-// only in such bytes would canonicalize to the same payload and share a
-// signature. Every string that reaches the payload passes through here: the
-// event name, attribute keys, nested map keys, and string values.
-func checkUTF8(s, what string) error {
-	if !utf8.ValidString(s) {
-		return fmt.Errorf("%s contains invalid UTF-8", what)
-	}
-	return nil
 }
 
 func (*signingProcessor) Start(_ context.Context, _ component.Host) error {

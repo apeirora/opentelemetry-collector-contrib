@@ -1,9 +1,9 @@
 module github.com/open-telemetry/opentelemetry-collector-contrib/processor/verifyprocessor
 
-go 1.26.0
+go 1.27.3
 
 require (
-	github.com/gowebpki/jcs v1.0.2
+	github.com/open-telemetry/opentelemetry-collector-contrib/internal/canonicaljson v0.0.0-00010101000000-000000000000
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/collector/component v1.71.0
 	go.opentelemetry.io/collector/component/componenttest v0.165.0
@@ -26,6 +26,7 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/gowebpki/jcs v1.0.2 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/knadh/koanf/maps v0.1.3 // indirect
@@ -57,3 +58,5 @@ require (
 	google.golang.org/grpc v1.85.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
+
+replace github.com/open-telemetry/opentelemetry-collector-contrib/internal/canonicaljson => ../../internal/canonicaljson
