@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/canonicaljson"
 )
 
 // These tests pin the boundaries of the canonical payload: where nesting stops,
@@ -40,18 +42,20 @@ func recordWithAttr(set func(pcommon.Map)) plog.LogRecord {
 // grows a Go stack. A cap that sat after json.Marshal would overflow the stack
 // on the same input before it was ever read.
 func TestDepthCapIsCheckedBeforeMarshal(t *testing.T) {
-	p := &signingProcessor{}
 	lr := recordWithAttr(func(m pcommon.Map) {
-		nestedSliceValue(jsonMaxDepth + 1).CopyTo(m.PutEmpty("deep"))
+		nestedSliceValue(canonicaljson.DefaultMaxDepth + 1).CopyTo(m.PutEmpty("deep"))
 	})
-	_, err := p.serializeLogRecord(lr)
+	opts := canonicaljson.SerializeLogRecordOptions{
+		ExcludePrefixes: []string{"audit.integrity."},
+	}
+	_, err := canonicaljson.SerializeLogRecord(lr, opts)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "nesting depth limit")
 
 	lr = recordWithAttr(func(m pcommon.Map) {
-		nestedSliceValue(jsonMaxDepth - 1).CopyTo(m.PutEmpty("deep"))
+		nestedSliceValue(canonicaljson.DefaultMaxDepth - 1).CopyTo(m.PutEmpty("deep"))
 	})
-	_, err = p.serializeLogRecord(lr)
+	_, err = canonicaljson.SerializeLogRecord(lr, opts)
 	require.NoError(t, err)
 }
 
@@ -71,7 +75,7 @@ func TestStringBracesAreNotStructure(t *testing.T) {
 
 	masked := recordWithAttr(func(m pcommon.Map) {
 		m.PutStr("a", strings.Repeat("}", 400))
-		nestedSliceValue(jsonMaxDepth + 100).CopyTo(m.PutEmpty("b"))
+		nestedSliceValue(canonicaljson.DefaultMaxDepth + 100).CopyTo(m.PutEmpty("b"))
 	})
 	_, err = p.serializeLogRecord(masked)
 	require.Error(t, err, "a sibling string of '}' must not mask real depth")
