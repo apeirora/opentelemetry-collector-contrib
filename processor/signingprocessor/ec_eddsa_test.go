@@ -81,7 +81,7 @@ func generateEd25519PEM(t *testing.T) (certPEM, keyPEM []byte, key ed25519.Priva
 // newAlgoProcessor creates a signingProcessor with the given algorithm and provider.
 func newAlgoProcessor(t *testing.T, algorithm string, prov KeyMaterialProvider) *signingProcessor {
 	t.Helper()
-	cfg := &Config{Algorithm: algorithm, CertificateRef: CertificateRefFingerprint}
+	cfg := &Config{Algorithm: algorithm, CertificateRef: certificateRefFingerprint}
 	var hf func() hash.Hash
 	switch cfg.GetHash() {
 	case crypto.SHA256:
@@ -108,10 +108,10 @@ func TestConfigValidateAlgorithms(t *testing.T) {
 		algorithm string
 		wantErr   bool
 	}{
-		{AlgorithmRS256, false},
-		{AlgorithmRS512, false},
-		{AlgorithmES256, false},
-		{AlgorithmEdDSA, false},
+		{algorithmRS256, false},
+		{algorithmRS512, false},
+		{algorithmES256, false},
+		{algorithmEdDSA, false},
 		{"HS256", true},
 		{"PS256", true},
 		{"", false}, // defaults to RS256
@@ -120,7 +120,7 @@ func TestConfigValidateAlgorithms(t *testing.T) {
 		t.Run(tt.algorithm, func(t *testing.T) {
 			cfg := &Config{
 				Algorithm: tt.algorithm,
-				KeySource: KeySourceConfig{Type: KeySourceFile, File: validFile},
+				KeySource: KeySourceConfig{Type: keySourceFile, File: validFile},
 			}
 			err := cfg.Validate()
 			if (err != nil) != tt.wantErr {
@@ -135,10 +135,10 @@ func TestConfigGetHash(t *testing.T) {
 		alg  string
 		want crypto.Hash
 	}{
-		{AlgorithmRS256, crypto.SHA256},
-		{AlgorithmRS512, crypto.SHA512},
-		{AlgorithmES256, crypto.SHA256},
-		{AlgorithmEdDSA, crypto.Hash(0)},
+		{algorithmRS256, crypto.SHA256},
+		{algorithmRS512, crypto.SHA512},
+		{algorithmES256, crypto.SHA256},
+		{algorithmEdDSA, crypto.Hash(0)},
 	}
 	for _, c := range cases {
 		if got := (&Config{Algorithm: c.alg}).GetHash(); got != c.want {
@@ -209,7 +209,7 @@ func TestParseCertificateDataKeyMismatch(t *testing.T) {
 func TestSignVerifyES256(t *testing.T) {
 	certPEM, keyPEM, ecKey := generateECPEM(t)
 	cr, _ := parseCertificateData(certPEM, keyPEM)
-	p := newAlgoProcessor(t, AlgorithmES256, cr)
+	p := newAlgoProcessor(t, algorithmES256, cr)
 
 	lr := plog.NewLogRecord()
 	lr.SetEventName("user.login.success")
@@ -258,7 +258,7 @@ func TestSignVerifyES256(t *testing.T) {
 func TestSignVerifyEdDSA(t *testing.T) {
 	certPEM, keyPEM, edKey := generateEd25519PEM(t)
 	cr, _ := parseCertificateData(certPEM, keyPEM)
-	p := newAlgoProcessor(t, AlgorithmEdDSA, cr)
+	p := newAlgoProcessor(t, algorithmEdDSA, cr)
 
 	lr := plog.NewLogRecord()
 	lr.SetEventName("document.access")
@@ -302,7 +302,7 @@ func TestSignWrongKeyTypeRSA(t *testing.T) {
 	_ = rsaKey
 
 	// Use faultyProvider which returns nil — just verify the dispatch returns error
-	p := newAlgoProcessor(t, AlgorithmES256, &faultyProvider{})
+	p := newAlgoProcessor(t, algorithmES256, &faultyProvider{})
 	lr := plog.NewLogRecord()
 	lr.SetTimestamp(pcommon.Timestamp(1000))
 	err := p.processLogRecord(lr)
@@ -312,7 +312,7 @@ func TestSignWrongKeyTypeRSA(t *testing.T) {
 }
 
 func TestSignWrongKeyTypeEdDSA(t *testing.T) {
-	p := newAlgoProcessor(t, AlgorithmEdDSA, &faultyProvider{})
+	p := newAlgoProcessor(t, algorithmEdDSA, &faultyProvider{})
 	lr := plog.NewLogRecord()
 	lr.SetTimestamp(pcommon.Timestamp(1000))
 	err := p.processLogRecord(lr)
@@ -328,7 +328,7 @@ func TestSignWrongKeyTypeEdDSA(t *testing.T) {
 func TestES256TamperedPayloadDetected(t *testing.T) {
 	certPEM, keyPEM, ecKey := generateECPEM(t)
 	cr, _ := parseCertificateData(certPEM, keyPEM)
-	p := newAlgoProcessor(t, AlgorithmES256, cr)
+	p := newAlgoProcessor(t, algorithmES256, cr)
 
 	lr := plog.NewLogRecord()
 	lr.SetEventName("original.event")
