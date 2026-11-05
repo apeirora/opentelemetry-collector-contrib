@@ -31,6 +31,7 @@ import (
 )
 
 const (
+	// maxFailureDetails caps how many record[r,s,i] indexes appear in a
 	// permanent verification error; remaining failures are summarized as
 	// "and N more" so large batches cannot inflate the error string.
 	maxFailureDetails = 8

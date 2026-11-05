@@ -6,6 +6,7 @@ require (
 	github.com/gowebpki/jcs v1.0.2
 	github.com/openbao/openbao/api/v2 v2.7.1
 	github.com/open-telemetry/opentelemetry-collector-contrib/internal/canonicaljson v0.0.0-00010101000000-000000000000
+	github.com/open-telemetry/opentelemetry-collector-contrib/internal/canonicaljson v0.0.0
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/collector/component v1.71.1-0.20261112225459-4888f0b280f9
 	go.opentelemetry.io/collector/component/componenttest v0.165.1-0.20261112225459-4888f0b280f9
