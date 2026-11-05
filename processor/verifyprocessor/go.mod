@@ -3,7 +3,7 @@ module github.com/open-telemetry/opentelemetry-collector-contrib/processor/verif
 go 1.27.3
 
 require (
-	github.com/open-telemetry/opentelemetry-collector-contrib/internal/canonicaljson v0.0.0-00010101000000-000000000000
+	github.com/open-telemetry/opentelemetry-collector-contrib/internal/canonicaljson v0.0.0
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/collector/component v1.70.1-0.20261105184035-79bf8a49d2e4
 	go.opentelemetry.io/collector/component/componenttest v0.164.1-0.20261105184035-79bf8a49d2e4
