@@ -5,7 +5,7 @@ status:
   stability:
     development: [internal]
   codeowners:
-    active: [hilmarf, jmacd]
+    active: [hilmarf, jmacd, MJarmo]
 
 # This is an internal module that provides RFC 8785 (JCS) canonical JSON
 # serialization for log records. It is used by the signing and verify processors.
