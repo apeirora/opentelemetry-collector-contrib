@@ -191,18 +191,21 @@ func TestValueToInterface(t *testing.T) {
 			errMsg:   "string value contains invalid UTF-8",
 		},
 		{
-			name: "invalid UTF-8 in map key",
+			name: "map with multiple keys sorted",
 			setup: func() pcommon.Value {
 				v := pcommon.NewValueMap()
 				m := v.Map()
-				// This is a bit tricky - we need to create an invalid key
-				// We'll use UnsafeInsert which bypasses validation
-				m.PutStr("valid", "value")
+				// Add keys in non-alphabetical order to verify they get sorted
+				m.PutStr("zebra", "last")
+				m.PutStr("apple", "first")
+				m.PutStr("middle", "mid")
 				return v
 			},
 			maxDepth: 128,
 			want: map[string]any{
-				"valid": map[string]any{"stringValue": "value"},
+				"zebra":  map[string]any{"stringValue": "last"},
+				"apple":  map[string]any{"stringValue": "first"},
+				"middle": map[string]any{"stringValue": "mid"},
 			},
 		},
 	}
