@@ -25,6 +25,8 @@ import (
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/processor/processortest"
 	"go.uber.org/zap"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/canonicaljson"
 )
 
 func TestConfigValidate(t *testing.T) {
@@ -229,15 +231,15 @@ func TestValueToInterfaceAndSerializeFields(t *testing.T) {
 
 	nested := pcommon.NewValueMap()
 	cur := nested.Map()
-	for range jsonMaxDepth + 1 {
+	for range canonicaljson.DefaultMaxDepth + 1 {
 		next := cur.PutEmptyMap("n")
 		cur = next
 	}
-	_, err = p.valueToInterface(nested, 0)
+	_, err = canonicaljson.ValueToInterface(nested, 0, canonicaljson.DefaultMaxDepth)
 	require.Error(t, err)
 
 	bad := pcommon.NewValueStr(string([]byte{0xff, 0xfe}))
-	_, err = p.valueToInterface(bad, 0)
+	_, err = canonicaljson.ValueToInterface(bad, 0, canonicaljson.DefaultMaxDepth)
 	require.Error(t, err)
 
 	lr.SetEventName(string([]byte{0xff}))
