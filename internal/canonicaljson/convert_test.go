@@ -530,3 +530,57 @@ func TestValueToInterface_Float64SerializationFormat(t *testing.T) {
 		})
 	}
 }
+
+// TestValueToInterface_SliceErrorPropagation verifies that errors from nested
+// slice elements are properly propagated up. This tests the error handling path
+// in the ValueTypeSlice case.
+func TestValueToInterface_SliceErrorPropagation(t *testing.T) {
+	// Create a slice with deeply nested structure that exceeds maxDepth
+	slice := pcommon.NewValueSlice()
+
+	// First element: valid simple value
+	slice.Slice().AppendEmpty().SetStr("valid")
+
+	// Second element: deeply nested map that will exceed depth limit
+	deepMap := slice.Slice().AppendEmpty().SetEmptyMap()
+	current := deepMap
+	for i := 0; i < 10; i++ {
+		current = current.PutEmptyMap("level")
+	}
+	current.PutStr("deep", "value")
+
+	// Third element: another valid value (to ensure we test error in middle)
+	slice.Slice().AppendEmpty().SetInt(42)
+
+	// Call with maxDepth too low to process the second element
+	_, err := ValueToInterface(slice, 0, 5)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nesting depth limit",
+		"error from nested element should propagate through slice")
+}
+
+// TestValueToInterface_MapErrorPropagation verifies that errors from nested
+// map values are properly propagated up. This tests the error handling path
+// in the ValueTypeMap case.
+func TestValueToInterface_MapErrorPropagation(t *testing.T) {
+	// Create a map with a deeply nested value that exceeds maxDepth
+	m := pcommon.NewValueMap()
+
+	m.Map().PutStr("valid_key", "valid_value")
+
+	// Add deeply nested structure as another value
+	deepMap := m.Map().PutEmptyMap("deep_key")
+	current := deepMap
+	for i := 0; i < 10; i++ {
+		current = current.PutEmptyMap("level")
+	}
+	current.PutStr("deep", "value")
+
+	m.Map().PutInt("another_valid", 123)
+
+	// Call with maxDepth too low to process the deep_key value
+	_, err := ValueToInterface(m, 0, 5)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nesting depth limit",
+		"error from nested map value should propagate")
+}
