@@ -5,6 +5,7 @@ package canonicaljson
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"strconv"
 	"testing"
 
@@ -247,4 +248,53 @@ func TestValueToInterface_EmptyMap(t *testing.T) {
 	got, err := valueToInterface(v, 0, 128)
 	require.NoError(t, err)
 	assert.Equal(t, map[string]any{}, got)
+}
+
+// TestValueToInterface_EmptyValueSerializesToNull verifies that pcommon.ValueTypeEmpty
+// returns nil, which marshals to JSON "null" per OTLP spec:
+// "Empty values as JSON null" (for array elements)
+// This is semantically different from an empty map ({}) or empty slice ([]).
+func TestValueToInterface_EmptyValueSerializesToNull(t *testing.T) {
+	v := pcommon.NewValueEmpty()
+
+	// ValueToInterface should return nil for empty values
+	result, err := ValueToInterface(v, 0, 128)
+	require.NoError(t, err)
+	require.Nil(t, result, "ValueTypeEmpty should return nil")
+
+	// Verify it marshals to JSON "null"
+	jsonBytes, err := json.Marshal(map[string]any{"empty": result})
+	require.NoError(t, err)
+	assert.Equal(t, `{"empty":null}`, string(jsonBytes),
+		"nil should marshal to JSON null, not empty object")
+
+	// Also verify it works in arrays
+	arrayJSON, err := json.Marshal([]any{result})
+	require.NoError(t, err)
+	assert.Equal(t, `[null]`, string(arrayJSON))
+}
+
+// TestValueToInterface_EmptyValueVsEmptyMap documents the semantic difference
+// between ValueTypeEmpty (no value = null) and ValueTypeMap with len=0 (empty object = {})
+func TestValueToInterface_EmptyValueVsEmptyMap(t *testing.T) {
+	emptyValue := pcommon.NewValueEmpty()
+	emptyMap := pcommon.NewValueMap()
+
+	resultEmpty, err := ValueToInterface(emptyValue, 0, 128)
+	require.NoError(t, err)
+
+	resultMap, err := ValueToInterface(emptyMap, 0, 128)
+	require.NoError(t, err)
+
+	// They should be different types
+	assert.Nil(t, resultEmpty, "Empty value should be nil")
+	assert.NotNil(t, resultMap, "Empty map should be non-nil map")
+	assert.Equal(t, map[string]any{}, resultMap, "Empty map should be empty map")
+
+	// And marshal differently in JSON
+	jsonEmpty, _ := json.Marshal(resultEmpty)
+	jsonMap, _ := json.Marshal(resultMap)
+
+	assert.Equal(t, `null`, string(jsonEmpty), "Empty value marshals to null")
+	assert.Equal(t, `{}`, string(jsonMap), "Empty map marshals to {}")
 }

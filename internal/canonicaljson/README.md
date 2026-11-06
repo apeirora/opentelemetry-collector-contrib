@@ -61,38 +61,68 @@ opts := canonicaljson.SerializeLogRecordOptions{
 
 ## Excluded Fields
 
-The following log record fields are **always excluded** from serialization (by design):
+The following log record fields are **intentionally excluded** from serialization:
 
-- `SeverityNumber` - Should not be set on audit records per spec
-- `SeverityText` - Should not be set on audit records per spec  
-- `Flags` - W3C trace-context sampling bit (observability, not audit-relevant)
+### Always Excluded (by design)
 
-Attributes can be excluded by prefix via `ExcludePrefixes` option.
+- **`SeverityNumber`** - Audit metadata, not part of signed content
+- **`SeverityText`** - Audit metadata, not part of signed content
+- **`Flags`** - W3C trace-context sampling bit (transport-level metadata)
+- **`DroppedAttributesCount`** - Pipeline metadata, not original content
+
+### Conditionally Excluded (via configuration)
+
+- **Attributes matching `ExcludePrefixes`** - e.g., `audit.integrity.*`, `audit.verification.*`
+
+### Design Rationale
+
+Fields are **hard-coded** rather than using reflection for several reasons:
+
+1. **Cryptographic Stability**: Automatically including new OTLP fields would break signature verification for existing records
+2. **Explicit Control**: Each field's inclusion is a conscious security decision
+3. **Performance**: No reflection overhead during serialization
+4. **Audit Trail**: Clear documentation of what is/isn't signed
+
+When new OTLP LogRecord fields are added, they require **explicit review** to determine if they should be part of the signed payload.
+
+## Included Fields
+
+The following log record fields **are serialized** (if non-zero/non-empty):
+
+| Field                 | JSON Key             | Format                     |
+|-----------------------|----------------------|----------------------------|
+| `EventName()`         | `event_name`         | String                     |
+| `Body()`              | `body`               | Type-wrapped value         |
+| `Timestamp()`         | `timestamp`          | Unix nanoseconds (string)  |
+| `ObservedTimestamp()` | `observed_timestamp` | Unix nanoseconds (string)  |
+| `TraceID()`           | `trace_id`           | Hex string                 |
+| `SpanID()`            | `span_id`            | Hex string                 |
+| `Attributes()`        | `attributes`         | Map of type-wrapped values |
 
 ## Value Encoding
 
 Values are wrapped with type information to preserve exact types during verification:
 
-| pcommon.ValueType | JSON Encoding |
-|-------------------|---------------|
-| `ValueTypeStr` | `{"stringValue": "text"}` |
-| `ValueTypeInt` | `{"intValue": "42"}` |
-| `ValueTypeDouble` | `{"doubleValue": 3.14}` |
-| `ValueTypeBool` | `{"boolValue": true}` |
-| `ValueTypeBytes` | `{"bytesValue": "base64..."}` |
-| `ValueTypeSlice` | `[...]` (array of wrapped values) |
-| `ValueTypeMap` | `{...}` (map with wrapped values) |
-| `ValueTypeEmpty` | `null` |
+| pcommon.ValueType | JSON Encoding                     |
+|-------------------|-----------------------------------|
+| `ValueTypeStr`    | `{"stringValue": "text"}`         |
+| `ValueTypeInt`    | `{"intValue": "42"}`              |
+| `ValueTypeDouble` | `{"doubleValue": 3.14}`           |
+| `ValueTypeBool`   | `{"boolValue": true}`             |
+| `ValueTypeBytes`  | `{"bytesValue": "base64..."}`     |
+| `ValueTypeSlice`  | `[...]` (array of wrapped values) |
+| `ValueTypeMap`    | `{...}` (map with wrapped values) |
+| `ValueTypeEmpty`  | `null`                            |
 
 ## Comparison with OTLP/JSON
 
-| Feature | Canonical JSON (RFC 8785) | OTLP/JSON |
-|---------|---------------------------|-----------|
-| **Purpose** | Cryptographic signing | Telemetry transport |
-| **Determinism** | ✅ Guaranteed | ❌ Not guaranteed |
-| **Key Ordering** | ✅ Lexicographic | ❌ Unspecified |
-| **Value Encoding** | Type-wrapped | Direct |
-| **Use Case** | Audit integrity | Data exchange |
+| Feature            | Canonical JSON (RFC 8785) | OTLP/JSON           |
+|--------------------|---------------------------|---------------------|
+| **Purpose**        | Cryptographic signing     | Telemetry transport |
+| **Determinism**    | ✅ Guaranteed              | ❌ Not guaranteed    |
+| **Key Ordering**   | ✅ Lexicographic           | ❌ Unspecified       |
+| **Value Encoding** | Type-wrapped              | Direct              |
+| **Use Case**       | Audit integrity           | Data exchange       |
 
 Example:
 
@@ -164,5 +194,5 @@ External projects should **not** depend on this package. If you need canonical J
 
 ## License
 
-Copyright The OpenTelemetry Authors  
+Copyright The OpenTelemetry Authors
 SPDX-License-Identifier: Apache-2.0

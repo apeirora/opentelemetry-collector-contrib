@@ -37,10 +37,24 @@ type SerializeLogRecordOptions struct {
 
 // SerializeLogRecord produces RFC 8785 (JCS) canonical JSON of a log record.
 //
-// Fields excluded from serialization:
+// Fields included in serialization (per OTLP LogRecord):
+//   - event_name (EventName)
+//   - body (Body)
+//   - timestamp (Timestamp as Unix nanoseconds string)
+//   - observed_timestamp (ObservedTimestamp as Unix nanoseconds string)
+//   - trace_id (TraceID as hex string)
+//   - span_id (SpanID as hex string)
+//   - attributes (Attributes, filtered by ExcludePrefixes)
+//
+// Fields intentionally excluded from serialization:
 //   - Attributes matching any prefix in opts.ExcludePrefixes
-//   - SeverityNumber / SeverityText (per audit spec)
-//   - Flags (W3C trace-context sampling bit)
+//   - SeverityNumber / SeverityText (audit metadata, not signed content)
+//   - Flags (W3C trace-context sampling bit, transport-level metadata)
+//   - DroppedAttributesCount (pipeline metadata, not original content)
+//
+// Note: This field list is intentionally hard-coded rather than using reflection
+// to ensure cryptographic stability. Any new OTLP LogRecord fields require explicit
+// review to determine if they should be part of the signed payload.
 //
 // Returns canonical JSON bytes or an error if:
 //   - Nesting depth exceeds MaxDepth
