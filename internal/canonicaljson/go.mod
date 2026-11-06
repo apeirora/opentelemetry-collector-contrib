@@ -1,6 +1,6 @@
 module github.com/open-telemetry/opentelemetry-collector-contrib/internal/canonicaljson
 
-go 1.27.3
+go 1.26.0
 
 require (
 	github.com/gowebpki/jcs v1.0.2
