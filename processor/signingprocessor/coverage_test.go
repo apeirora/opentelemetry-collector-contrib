@@ -1,6 +1,24 @@
 // Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
+// Package signingprocessor - Config, Factory, FileProvider, and Certificate Reader Tests
+//
+// This file contains tests for multiple components to improve test coverage:
+// - config.go: Configuration validation and loading
+// - factory.go: Processor factory creation and initialization
+// - file_provider.go: File-based key material provider
+// - certificate_reader.go: Certificate and private key parsing
+//
+// Named "coverage_test.go" for historical reasons; consolidates tests for
+// foundational components that are shared across all signing algorithms.
+//
+// Tests cover:
+// - Config validation and YAML loading
+// - Factory lifecycle (creation, shutdown)
+// - File-based key material loading
+// - Certificate parsing for RSA, EC, EdDSA (various formats: PEM, PKCS8, PKCS1)
+// - Base64 decoding for inline key material
+
 package signingprocessor
 
 import (

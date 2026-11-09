@@ -1,6 +1,18 @@
 // Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
+// Package canonicaljson - Serialization Edge Case and Boundary Tests
+//
+// This file contains tests that pin the boundaries of the canonical payload:
+// where nesting stops, what a string may contain, and which distinct records
+// must not share bytes.
+//
+// Each test is a guard for a defect that was reproduced against an earlier
+// implementation and is measured again here against the current code.
+//
+// These tests cover edge cases across multiple source files (serialize.go, convert.go, validate.go)
+// to ensure the complete serialization pipeline handles boundary conditions correctly.
+
 package canonicaljson
 
 import (
@@ -11,11 +23,6 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 )
-
-// These tests pin the boundaries of the canonical payload: where nesting stops,
-// what a string may contain, and which distinct records must not share bytes.
-// Each one is a guard for a defect that was reproduced against an earlier
-// implementation and is measured again here against the current code.
 
 // nestedSliceValue creates a nested slice structure of the given depth.
 func nestedSliceValue(depth int) pcommon.Value {
