@@ -245,7 +245,7 @@ func TestSignVerifyES256(t *testing.T) {
 		t.Fatalf("decode sig: %v", err)
 	}
 
-	payload, err := p.serializeLogRecord(lr)
+	payload, err := serializeLogRecordWithDefaults(lr)
 	if err != nil {
 		t.Fatalf("serialize: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestSignVerifyEdDSA(t *testing.T) {
 	}
 
 	// EdDSA: verify against raw canonical payload (no pre-hash)
-	payload, err := p.serializeLogRecord(lr)
+	payload, err := serializeLogRecordWithDefaults(lr)
 	if err != nil {
 		t.Fatalf("serialize: %v", err)
 	}
@@ -358,7 +358,7 @@ func TestES256TamperedPayloadDetected(t *testing.T) {
 
 	// Tamper: change the EventName
 	lr.SetEventName("tampered.event")
-	tamperedPayload, _ := p.serializeLogRecord(lr)
+	tamperedPayload, _ := serializeLogRecordWithDefaults(lr)
 
 	hasher := crypto.SHA256.New()
 	hasher.Write(tamperedPayload)

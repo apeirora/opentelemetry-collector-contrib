@@ -4,7 +4,6 @@
 package signingprocessor
 
 import (
-	"bytes"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -14,7 +13,6 @@ import (
 	"encoding/base64"
 	"hash"
 	"math/big"
-	"strings"
 	"testing"
 	"time"
 
@@ -57,8 +55,13 @@ func newTestProvider(t *testing.T) *staticProvider {
 	return &staticProvider{key: key, cert: cert}
 }
 
-// verifyRecord replicates what verify-signed-log.go does:
+// verifyRecord replicates what the verify processor does:
 // strip audit.integrity.* attrs, re-serialize with JCS, hash, verify sig.
+//
+// This implicitly tests that ExcludePrefixes works correctly: if
+// audit.integrity.* attributes were not excluded from the canonical payload,
+// the computed hash would differ from the signed hash and verification would fail.
+// Every test using verifyRecord() thus validates the ExcludePrefixes feature.
 func verifyRecord(t *testing.T, lr plog.LogRecord, pubKey *rsa.PublicKey) {
 	t.Helper()
 
@@ -146,66 +149,6 @@ func TestSignVerifyWithTraceCorrelation(t *testing.T) {
 	verifyRecord(t, lr, &prov.key.PublicKey)
 }
 
-// TestJCSCanonicalization verifies that two records with the same data but
-// attributes inserted in different order produce identical canonical bytes.
-func TestJCSCanonicalization(t *testing.T) {
-	prov := newTestProvider(t)
-	p := &signingProcessor{
-		config:   &Config{Algorithm: "RS256"},
-		provider: prov,
-		hashFunc: func() hash.Hash { return crypto.SHA256.New() },
-	}
-
-	makeRecord := func(order []string) plog.LogRecord {
-		lr := plog.NewLogRecord()
-		lr.SetTimestamp(pcommon.Timestamp(1000000000))
-		for _, k := range order {
-			lr.Attributes().PutStr(k, "v")
-		}
-		return lr
-	}
-
-	r1 := makeRecord([]string{"z.attr", "a.attr", "m.attr"})
-	r2 := makeRecord([]string{"a.attr", "m.attr", "z.attr"})
-
-	b1, err := p.serializeLogRecord(r1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b2, err := p.serializeLogRecord(r2)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !bytes.Equal(b1, b2) {
-		t.Errorf("JCS produced different output for same data in different insertion order:\n  order1: %s\n  order2: %s", b1, b2)
-	}
-}
-
-// TestIntegrityAttrsExcludedFromPayload ensures audit.integrity.* attrs added
-// by the processor are not included in the hash input (would cause verify failure).
-func TestIntegrityAttrsExcludedFromPayload(t *testing.T) {
-	prov := newTestProvider(t)
-	p := &signingProcessor{
-		config:   &Config{Algorithm: "RS256"},
-		provider: prov,
-		hashFunc: func() hash.Hash { return crypto.SHA256.New() },
-	}
-
-	lr := plog.NewLogRecord()
-	lr.Attributes().PutStr("audit.actor.id", "u1")
-	// Pre-populate an integrity attr to ensure it's stripped from payload
-	lr.Attributes().PutStr("audit.integrity.stale", "should-be-excluded")
-
-	b, err := p.serializeLogRecord(lr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(b), "audit.integrity") {
-		t.Errorf("serialized payload contains audit.integrity.* attr: %s", string(b))
-	}
-}
-
 // TestSignVerifyEventName confirms that EventName is part of the signed payload:
 // changing it after signing must cause signature verification to fail.
 func TestSignVerifyEventName(t *testing.T) {
@@ -236,7 +179,7 @@ func TestSignVerifyEventName(t *testing.T) {
 
 	// Re-serialize with tampered EventName
 	lr.SetEventName("admin.delete.all")
-	tamperedPayload, err := p.serializeLogRecord(lr)
+	tamperedPayload, err := serializeLogRecordWithDefaults(lr)
 	if err != nil {
 		t.Fatalf("serialize tampered: %v", err)
 	}

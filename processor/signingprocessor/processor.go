@@ -20,7 +20,6 @@ import (
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
-	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/processor"
 	"go.uber.org/zap"
@@ -139,21 +138,6 @@ func (p *signingProcessor) processLogRecord(lr plog.LogRecord) error {
 	lr.Attributes().PutStr("audit.integrity.value", base64.StdEncoding.EncodeToString(signature))
 	lr.Attributes().PutStr("audit.integrity.signer", "collector")
 	return nil
-}
-
-// serializeLogRecord is a test helper that wraps canonicaljson.SerializeLogRecord
-// with the signing processor's default options.
-func (*signingProcessor) serializeLogRecord(lr plog.LogRecord) ([]byte, error) {
-	opts := canonicaljson.SerializeLogRecordOptions{
-		ExcludePrefixes: []string{"audit.integrity."},
-	}
-	return canonicaljson.SerializeLogRecord(lr, opts)
-}
-
-// valueToInterface is a test helper that wraps the canonicaljson conversion function.
-func (*signingProcessor) valueToInterface(v pcommon.Value, depth int) (any, error) {
-	// Use default max depth from canonicaljson
-	return canonicaljson.ValueToInterface(v, depth, canonicaljson.DefaultMaxDepth)
 }
 
 // sign produces a signature over payload using the configured JWA algorithm.

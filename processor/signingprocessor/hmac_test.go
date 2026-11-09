@@ -255,7 +255,7 @@ func TestSignVerifyHMACSHA256(t *testing.T) {
 		t.Fatalf("decode sig: %v", err)
 	}
 
-	payload, err := p.serializeLogRecord(lr)
+	payload, err := serializeLogRecordWithDefaults(lr)
 	if err != nil {
 		t.Fatalf("serialize: %v", err)
 	}
@@ -332,7 +332,7 @@ func TestHMACTamperedPayloadDetected(t *testing.T) {
 	storedMAC, _ := base64.StdEncoding.DecodeString(sigVal.Str())
 
 	lr.SetEventName("tampered.event")
-	tamperedPayload, _ := p.serializeLogRecord(lr)
+	tamperedPayload, _ := serializeLogRecordWithDefaults(lr)
 
 	mac := hmac.New(sha256.New, []byte("tamper-test-secret"))
 	mac.Write(tamperedPayload)

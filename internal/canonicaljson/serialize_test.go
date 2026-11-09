@@ -285,6 +285,31 @@ func TestSerializeLogRecord_CanonicalJSON(t *testing.T) {
 		"Attributes should be in alphabetical order in canonical JSON")
 }
 
+// TestSerializeLogRecord_AttributeInsertionOrderDeterministic verifies that two records
+// with the same data but attributes inserted in different order produce identical
+// canonical bytes. This tests the JCS key sorting requirement.
+func TestSerializeLogRecord_AttributeInsertionOrderDeterministic(t *testing.T) {
+	makeRecord := func(order []string) plog.LogRecord {
+		lr := plog.NewLogRecord()
+		lr.SetTimestamp(pcommon.Timestamp(1000000000))
+		for _, k := range order {
+			lr.Attributes().PutStr(k, "v")
+		}
+		return lr
+	}
+
+	r1 := makeRecord([]string{"z.attr", "a.attr", "m.attr"})
+	r2 := makeRecord([]string{"a.attr", "m.attr", "z.attr"})
+
+	opts := SerializeLogRecordOptions{}
+	b1, err := SerializeLogRecord(r1, opts)
+	require.NoError(t, err)
+	b2, err := SerializeLogRecord(r2, opts)
+	require.NoError(t, err)
+
+	require.Equal(t, b1, b2, "attribute insertion order must not affect serialization (JCS key sorting)")
+}
+
 func TestMarshalJCS_Empty(t *testing.T) {
 	result, err := marshalJCS(map[string]any{}, DefaultMaxInputBytes)
 	require.NoError(t, err)
