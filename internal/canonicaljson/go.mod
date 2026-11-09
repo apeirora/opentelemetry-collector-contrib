@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/gowebpki/jcs v1.0.2
+	github.com/probityai/agent-evidence-vectors/jcsvectors v0.1.0
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/collector/pdata v1.70.0
 )
