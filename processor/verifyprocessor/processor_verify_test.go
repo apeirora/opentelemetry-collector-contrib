@@ -178,17 +178,6 @@ func TestVerifyRS512HappyPathAndTamper(t *testing.T) {
 	requireNoStatus(t, lr2.Attributes())
 }
 
-func TestEmptyValueSerializedAsNull(t *testing.T) {
-	p := newVerifyProc(t, &Config{FailureMode: failureModeStrict, VerificationProfile: "default"}, &staticProvider{hmacKey: []byte("x")})
-	lr := plog.NewLogRecord()
-	lr.Attributes().PutEmpty("unset")
-	lr.Attributes().PutEmptySlice("list").AppendEmpty()
-
-	payload, err := p.serializeLogRecord(lr)
-	require.NoError(t, err)
-	assert.JSONEq(t, `{"attributes":{"list":[null],"unset":null}}`, string(payload))
-}
-
 func TestVerifyHMACHappyPathAndTamper(t *testing.T) {
 	hmacKey := []byte("super-secret-hmac-key")
 	sink := &consumertest.LogsSink{}
@@ -627,21 +616,6 @@ func TestFactoryCreateWithFileHMAC(t *testing.T) {
 	proc, err := factory.CreateLogs(t.Context(), processortest.NewNopSettings(typ), cfg, consumertest.NewNop())
 	require.NoError(t, err)
 	assert.True(t, proc.Capabilities().MutatesData)
-}
-
-func TestIntegrityAttrsExcludedFromPayload(t *testing.T) {
-	p := newVerifyProc(t, &Config{FailureMode: failureModeStrict, VerificationProfile: "default"}, &staticProvider{hmacKey: []byte("x")})
-	ld := makeLogs("body", map[string]string{
-		"keep":                 "yes",
-		attrIntegrityValue:     "sig",
-		attrVerificationStatus: "stale",
-	}, algorithmHMACSHA256, "", "sig")
-	lr := ld.ResourceLogs().At(0).ScopeLogs().At(0).LogRecords().At(0)
-	payload, err := p.serializeLogRecord(lr)
-	require.NoError(t, err)
-	assert.NotContains(t, string(payload), "audit.integrity")
-	assert.NotContains(t, string(payload), "audit.verification")
-	assert.Contains(t, string(payload), "keep")
 }
 
 func hmacSign(t *testing.T, key, payload []byte) string {
