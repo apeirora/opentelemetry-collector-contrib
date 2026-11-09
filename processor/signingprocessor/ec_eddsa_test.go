@@ -1,6 +1,21 @@
 // Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
+// Package signingprocessor - EC and EdDSA Algorithm Integration Tests
+//
+// This file contains end-to-end tests for elliptic curve signing algorithms:
+// - EC (P-256) signing and verification with ES256
+// - EdDSA (Ed25519) signing and verification
+//
+// Components tested:
+// - processor.go: Log record signing and verification flow
+// - inline_provider.go: In-memory key material provider
+// - certificate_reader.go: Certificate and key parsing for EC/EdDSA
+// - config.go: Algorithm-specific configuration validation
+//
+// Tests cover the complete signing flow from configuration through key loading
+// to signature generation and verification for elliptic curve algorithms.
+
 package signingprocessor
 
 import (
