@@ -88,11 +88,11 @@ func SerializeLogRecord(lr plog.LogRecord, opts SerializeLogRecordOptions) ([]by
 	}
 
 	if lr.Timestamp() != 0 {
-		data["timestamp"] = strconv.FormatInt(lr.Timestamp().AsTime().UnixNano(), 10)
+		data["timestamp"] = Nanos(lr.Timestamp())
 	}
 
 	if lr.ObservedTimestamp() != 0 {
-		data["observed_timestamp"] = strconv.FormatInt(lr.ObservedTimestamp().AsTime().UnixNano(), 10)
+		data["observed_timestamp"] = Nanos(lr.ObservedTimestamp())
 	}
 
 	if !lr.TraceID().IsEmpty() {
@@ -147,4 +147,9 @@ func marshalJCS(v any, maxInputBytes int) ([]byte, error) {
 		return nil, fmt.Errorf("serialized log record exceeds size limit (%d > %d bytes)", len(raw), maxInputBytes)
 	}
 	return jcs.Transform(raw)
+}
+
+// Nanos converts a pcommon.Timestamp to its string representation in nanoseconds.
+func Nanos(ts pcommon.Timestamp) string {
+	return strconv.FormatUint(uint64(ts), 10)
 }
