@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/gowebpki/jcs v1.0.2
+	github.com/open-telemetry/opentelemetry-collector-contrib/internal/canonicaljson v0.0.0
 	github.com/openbao/openbao/api/v2 v2.7.1
 	github.com/open-telemetry/opentelemetry-collector-contrib/internal/canonicaljson v0.0.0-00010101000000-000000000000
 	github.com/open-telemetry/opentelemetry-collector-contrib/internal/canonicaljson v0.0.0
