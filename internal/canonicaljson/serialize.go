@@ -12,6 +12,7 @@ import (
 	"github.com/gowebpki/jcs"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
 // Default values
@@ -20,8 +21,8 @@ const (
 	DefaultMaxInputBytes = 1 << 21 // 2 MiB
 )
 
-// SerializeLogRecordOptions controls serialization behavior
-type SerializeLogRecordOptions struct {
+// SerializeOptions controls log record and span serialization behavior.
+type SerializeOptions struct {
 	// ExcludePrefixes lists attribute prefixes to exclude from serialization
 	// e.g., ["audit.integrity.", "audit.verification."]
 	ExcludePrefixes []string
@@ -33,6 +34,22 @@ type SerializeLogRecordOptions struct {
 	// MaxInputBytes caps the serialized JSON size before JCS canonicalization
 	// Default: 2 MiB (1 << 21)
 	MaxInputBytes int
+}
+
+// SerializeLogRecordOptions controls log record serialization behavior.
+type SerializeLogRecordOptions = SerializeOptions
+
+// SerializeSpanOptions controls span serialization behavior.
+type SerializeSpanOptions = SerializeOptions
+
+func (opts SerializeOptions) withDefaults() SerializeOptions {
+	if opts.MaxDepth == 0 {
+		opts.MaxDepth = DefaultMaxDepth
+	}
+	if opts.MaxInputBytes == 0 {
+		opts.MaxInputBytes = DefaultMaxInputBytes
+	}
+	return opts
 }
 
 // SerializeLogRecord produces RFC 8785 (JCS) canonical JSON of a log record.
@@ -62,13 +79,7 @@ type SerializeLogRecordOptions struct {
 //   - Invalid UTF-8 is encountered
 //   - JCS transformation fails
 func SerializeLogRecord(lr plog.LogRecord, opts SerializeLogRecordOptions) ([]byte, error) {
-	// Apply defaults
-	if opts.MaxDepth == 0 {
-		opts.MaxDepth = DefaultMaxDepth
-	}
-	if opts.MaxInputBytes == 0 {
-		opts.MaxInputBytes = DefaultMaxInputBytes
-	}
+	opts = opts.withDefaults()
 
 	data := make(map[string]any)
 
@@ -103,9 +114,121 @@ func SerializeLogRecord(lr plog.LogRecord, opts SerializeLogRecordOptions) ([]by
 		data["span_id"] = lr.SpanID().String()
 	}
 
+	if err := putAttributes(data, lr.Attributes(), opts); err != nil {
+		return nil, err
+	}
+
+	return marshalJCS(data, opts.MaxInputBytes)
+}
+
+// SerializeSpan produces RFC 8785 (JCS) canonical JSON of a span.
+//
+// Fields included in serialization:
+//   - trace_id, span_id, parent_span_id (hex strings, if non-empty)
+//   - name (if non-empty) and kind (always included as a number)
+//   - start_time and end_time (unsigned Unix nanoseconds strings, if non-zero)
+//   - attributes (filtered by ExcludePrefixes, if non-empty)
+//   - events (in original order, with name, timestamp, and filtered attributes)
+//   - links (in original order, with trace_id, span_id, and filtered attributes)
+//   - status (always included, with numeric code and non-empty message)
+//
+// TraceState and Flags on spans and links, all dropped counts, and attributes
+// matching ExcludePrefixes on spans, events, and links are intentionally excluded.
+// Empty event and link fields are omitted, but their entries are retained.
+// This schema is hard-coded for cryptographic stability; new OTLP fields require
+// explicit review before inclusion.
+//
+// Returns an error for excessive nesting depth or serialized size, invalid
+// UTF-8, or a failed JCS transformation, as with SerializeLogRecord.
+func SerializeSpan(span ptrace.Span, opts SerializeSpanOptions) ([]byte, error) {
+	opts = opts.withDefaults()
+	data := make(map[string]any)
+
+	if !span.TraceID().IsEmpty() {
+		data["trace_id"] = span.TraceID().String()
+	}
+	if !span.SpanID().IsEmpty() {
+		data["span_id"] = span.SpanID().String()
+	}
+	if !span.ParentSpanID().IsEmpty() {
+		data["parent_span_id"] = span.ParentSpanID().String()
+	}
+	if span.Name() != "" {
+		if err := checkUTF8(span.Name(), "span name"); err != nil {
+			return nil, err
+		}
+		data["name"] = span.Name()
+	}
+	data["kind"] = int32(span.Kind())
+	if span.StartTimestamp() != 0 {
+		data["start_time"] = Nanos(span.StartTimestamp())
+	}
+	if span.EndTimestamp() != 0 {
+		data["end_time"] = Nanos(span.EndTimestamp())
+	}
+
+	if err := putAttributes(data, span.Attributes(), opts); err != nil {
+		return nil, err
+	}
+
+	if span.Events().Len() > 0 {
+		events := make([]any, 0, span.Events().Len())
+		for i := 0; i < span.Events().Len(); i++ {
+			ev := span.Events().At(i)
+			event := make(map[string]any)
+			if ev.Name() != "" {
+				if err := checkUTF8(ev.Name(), "span event name"); err != nil {
+					return nil, err
+				}
+				event["name"] = ev.Name()
+			}
+			if ev.Timestamp() != 0 {
+				event["timestamp"] = Nanos(ev.Timestamp())
+			}
+			if err := putAttributes(event, ev.Attributes(), opts); err != nil {
+				return nil, fmt.Errorf("span event %d: %w", i, err)
+			}
+			events = append(events, event)
+		}
+		data["events"] = events
+	}
+
+	if span.Links().Len() > 0 {
+		links := make([]any, 0, span.Links().Len())
+		for i := 0; i < span.Links().Len(); i++ {
+			l := span.Links().At(i)
+			link := make(map[string]any)
+			if !l.TraceID().IsEmpty() {
+				link["trace_id"] = l.TraceID().String()
+			}
+			if !l.SpanID().IsEmpty() {
+				link["span_id"] = l.SpanID().String()
+			}
+			if err := putAttributes(link, l.Attributes(), opts); err != nil {
+				return nil, fmt.Errorf("span link %d: %w", i, err)
+			}
+			links = append(links, link)
+		}
+		data["links"] = links
+	}
+
+	status := map[string]any{"code": int32(span.Status().Code())}
+	if msg := span.Status().Message(); msg != "" {
+		if err := checkUTF8(msg, "span status message"); err != nil {
+			return nil, err
+		}
+		status["message"] = msg
+	}
+	data["status"] = status
+
+	return marshalJCS(data, opts.MaxInputBytes)
+}
+
+// putAttributes adds non-empty attributes after filtering and validating them.
+func putAttributes(data map[string]any, attributes pcommon.Map, opts SerializeOptions) error {
 	attrs := make(map[string]any)
 	var attrErr error
-	lr.Attributes().Range(func(k string, v pcommon.Value) bool {
+	attributes.Range(func(k string, v pcommon.Value) bool {
 		// Check if key matches any exclude prefix
 		for _, prefix := range opts.ExcludePrefixes {
 			if strings.HasPrefix(k, prefix) {
@@ -126,13 +249,13 @@ func SerializeLogRecord(lr plog.LogRecord, opts SerializeLogRecordOptions) ([]by
 		return true
 	})
 	if attrErr != nil {
-		return nil, attrErr
+		return attrErr
 	}
 	if len(attrs) > 0 {
 		data["attributes"] = attrs
 	}
 
-	return marshalJCS(data, opts.MaxInputBytes)
+	return nil
 }
 
 // marshalJCS produces RFC 8785 (JCS) canonical JSON bytes.
@@ -144,7 +267,7 @@ func marshalJCS(v any, maxInputBytes int) ([]byte, error) {
 		return nil, err
 	}
 	if len(raw) > maxInputBytes {
-		return nil, fmt.Errorf("serialized log record exceeds size limit (%d > %d bytes)", len(raw), maxInputBytes)
+		return nil, fmt.Errorf("serialized payload exceeds size limit (%d > %d bytes)", len(raw), maxInputBytes)
 	}
 	return jcs.Transform(raw)
 }

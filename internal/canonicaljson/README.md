@@ -1,6 +1,6 @@
 # Canonical JSON Serialization
 
-This internal package provides RFC 8785 (JCS) canonical JSON serialization for OpenTelemetry log records. It is used by the signing and verify processors to produce deterministic JSON representations for cryptographic operations.
+This internal package provides RFC 8785 (JCS) canonical JSON serialization for OpenTelemetry log records and spans. It is used by the signing and verify processors to produce deterministic JSON representations for cryptographic operations.
 
 ## Purpose
 
@@ -18,7 +18,7 @@ Canonical JSON serialization is required for cryptographic signing and verificat
 - ✅ Configurable depth and size limits
 - ✅ UTF-8 validation (prevents canonicalization issues)
 - ✅ Type-preserving value encoding (e.g., `{"intValue": "42"}`)
-- ✅ Comprehensive test coverage (43 tests)
+- ✅ Comprehensive serialization and validation tests
 
 ## Usage
 
@@ -37,6 +37,33 @@ if err != nil {
 }
 // canonical is deterministic, RFC 8785 compliant JSON
 ```
+
+### Span Serialization
+
+```go
+canonical, err := canonicaljson.SerializeSpan(span, canonicaljson.SerializeSpanOptions{
+    ExcludePrefixes: []string{"audit.integrity."},
+})
+```
+
+`SerializeLogRecordOptions` and `SerializeSpanOptions` are aliases of the shared
+`SerializeOptions` type, with the same depth and size defaults. For spans,
+`ExcludePrefixes` applies to attributes on the span, its events, and its links.
+
+The hard-coded span schema includes non-empty `trace_id`, `span_id`,
+`parent_span_id`, `name`, and filtered `attributes`; non-zero `start_time` and
+`end_time`; and always includes numeric `kind` and `status.code`.
+`status.message` is included only when non-empty. Non-empty event and link
+lists retain their original order, including entries with no included fields.
+Events include non-empty names, non-zero timestamps, and filtered attributes;
+links include non-empty trace/span IDs and filtered attributes.
+Trace state, flags, and all dropped counts are excluded.
+All timestamps are unsigned decimal nanoseconds strings, preserving the full
+`uint64` range without converting through `time.Time`.
+
+For span timestamps greater than `9223372036854775807`, this differs from the
+previous signing-processor serializer's signed `int64` conversion. Signatures
+created with that older encoding are not compatible with the unsigned payload.
 
 ### Custom Limits
 
@@ -163,14 +190,15 @@ Run tests:
 
 ```bash
 cd internal/canonicaljson
-go test -v ./...
+go test -race -count=1 -v ./...
 ```
 
 Test coverage:
 
-- 25 serialization tests (`serialize_test.go`)
-- 13 value conversion tests (`convert_test.go`)
-- 5 UTF-8 validation tests (`validate_test.go`)
+- Log record and span serialization, exclusions, and limits (`serialize_test.go`)
+- Value conversion (`convert_test.go`)
+- UTF-8 validation (`validate_test.go`)
+- Boundary and regression cases (`boundaries_test.go`, `regression_test.go`)
 
 ## Dependencies
 

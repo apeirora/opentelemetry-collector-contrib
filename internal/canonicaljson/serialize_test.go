@@ -5,6 +5,7 @@ package canonicaljson
 
 import (
 	"encoding/json"
+	"math"
 	"regexp"
 	"strings"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
 func TestSerializeLogRecord_BasicFields(t *testing.T) {
@@ -594,4 +596,450 @@ func wrapLeaves(canonical string) string {
 			return `{"doubleValue":` + leaf + `}`
 		}
 	})
+}
+
+// The fixture is independent of the signing processor and includes both signed
+// content and transport metadata that must never enter the canonical payload.
+func newCanonicalTestSpan() ptrace.Span {
+	s := ptrace.NewSpan()
+	s.SetTraceID(pcommon.TraceID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16})
+	s.SetSpanID(pcommon.SpanID{1, 2, 3, 4, 5, 6, 7, 8})
+	s.SetParentSpanID(pcommon.SpanID{8, 7, 6, 5, 4, 3, 2, 1})
+	s.SetName("tool.call")
+	s.SetKind(ptrace.SpanKindClient)
+	s.SetStartTimestamp(1714041600000000000)
+	s.SetEndTimestamp(1714041600500000000)
+	s.Attributes().PutStr("gen_ai.tool.name", "search")
+	s.TraceState().FromRaw("vendor=value")
+	s.SetFlags(1)
+	s.SetDroppedAttributesCount(2)
+	s.SetDroppedEventsCount(3)
+	s.SetDroppedLinksCount(4)
+	e := s.Events().AppendEmpty()
+	e.SetName("decision")
+	e.SetTimestamp(1714041600250000000)
+	e.Attributes().PutStr("choice", "a")
+	e.SetDroppedAttributesCount(5)
+	l := s.Links().AppendEmpty()
+	l.SetTraceID(pcommon.TraceID{16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1})
+	l.SetSpanID(pcommon.SpanID{2, 2, 2, 2, 2, 2, 2, 2})
+	l.Attributes().PutStr("link.kind", "follows")
+	l.TraceState().FromRaw("vendor=value")
+	l.SetFlags(1)
+	l.SetDroppedAttributesCount(6)
+	s.Status().SetCode(ptrace.StatusCodeError)
+	s.Status().SetMessage("tool failed")
+	return s
+}
+
+const canonicalTestSpanJSON = `{"attributes":{"gen_ai.tool.name":{"stringValue":"search"}},"end_time":"1714041600500000000","events":[{"attributes":{"choice":{"stringValue":"a"}},"name":"decision","timestamp":"1714041600250000000"}],"kind":3,"links":[{"attributes":{"link.kind":{"stringValue":"follows"}},"span_id":"0202020202020202","trace_id":"100f0e0d0c0b0a090807060504030201"}],"name":"tool.call","parent_span_id":"0807060504030201","span_id":"0102030405060708","start_time":"1714041600000000000","status":{"code":2,"message":"tool failed"},"trace_id":"0102030405060708090a0b0c0d0e0f10"}`
+
+func TestSerializeSpanFullPayload(t *testing.T) {
+	got, err := SerializeSpan(newCanonicalTestSpan(), SerializeSpanOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, canonicalTestSpanJSON, string(got))
+}
+
+func TestSerializeSpanEmptyFields(t *testing.T) {
+	s := ptrace.NewSpan()
+	got, err := SerializeSpan(s, SerializeSpanOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, `{"kind":0,"status":{"code":0}}`, string(got))
+
+	// Empty elements retain their positions but omit every zero-valued field.
+	s.Events().AppendEmpty()
+	s.Links().AppendEmpty()
+	got, err = SerializeSpan(s, SerializeSpanOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, `{"events":[{}],"kind":0,"links":[{}],"status":{"code":0}}`, string(got))
+}
+
+var spanAttributeLevels = []struct {
+	name  string
+	attrs func(ptrace.Span) pcommon.Map
+}{
+	{"span", func(s ptrace.Span) pcommon.Map { return s.Attributes() }},
+	{"event", func(s ptrace.Span) pcommon.Map { return s.Events().AppendEmpty().Attributes() }},
+	{"link", func(s ptrace.Span) pcommon.Map { return s.Links().AppendEmpty().Attributes() }},
+}
+
+func spanAttributesJSON(level, attrs string) string {
+	switch level {
+	case "event":
+		return `{"events":[{"attributes":` + attrs + `}],"kind":0,"status":{"code":0}}`
+	case "link":
+		return `{"kind":0,"links":[{"attributes":` + attrs + `}],"status":{"code":0}}`
+	default:
+		return `{"attributes":` + attrs + `,"kind":0,"status":{"code":0}}`
+	}
+}
+
+func TestSerializeSpanAttributeTypes(t *testing.T) {
+	// Handwritten expected bytes pin typed primitives, empty values, nested
+	// containers, integer precision, base64, and JCS's unescaped HTML characters.
+	const wantAttrs = `{"bool":{"boolValue":false},"bytes":{"bytesValue":"3q0="},"double":{"doubleValue":1.5},"empty":null,"empty_bytes":{"bytesValue":""},"empty_map":{},"empty_slice":[],"int":{"intValue":"-9223372036854775808"},"map":{"a":{"intValue":"9223372036854775807"},"z":{"stringValue":"é<&>"}},"slice":[{"stringValue":"first"},{"boolValue":true},{"nested":[{"doubleValue":2.5},null]}],"string":{"stringValue":"hello\n\"\\"}}`
+	for _, level := range spanAttributeLevels {
+		t.Run(level.name, func(t *testing.T) {
+			s := ptrace.NewSpan()
+			a := level.attrs(s)
+			a.PutStr("string", "hello\n\"\\")
+			a.PutInt("int", math.MinInt64)
+			a.PutDouble("double", 1.5)
+			a.PutBool("bool", false)
+			a.PutEmptyBytes("bytes").Append(0xde, 0xad)
+			a.PutEmpty("empty")
+			a.PutEmptyBytes("empty_bytes")
+			a.PutEmptyMap("empty_map")
+			a.PutEmptySlice("empty_slice")
+			m := a.PutEmptyMap("map")
+			m.PutStr("z", "é<&>")
+			m.PutInt("a", math.MaxInt64)
+			v := a.PutEmptySlice("slice")
+			v.AppendEmpty().SetStr("first")
+			v.AppendEmpty().SetBool(true)
+			nested := v.AppendEmpty().SetEmptyMap().PutEmptySlice("nested")
+			nested.AppendEmpty().SetDouble(2.5)
+			nested.AppendEmpty()
+			got, err := SerializeSpan(s, SerializeSpanOptions{})
+			require.NoError(t, err)
+			assert.Equal(t, spanAttributesJSON(level.name, wantAttrs), string(got))
+		})
+	}
+}
+
+func TestSerializeSpanExcludedFields(t *testing.T) {
+	s := newCanonicalTestSpan()
+	opts := SerializeSpanOptions{ExcludePrefixes: []string{"audit.integrity."}}
+	before, err := SerializeSpan(s, opts)
+	require.NoError(t, err)
+	require.Equal(t, canonicalTestSpanJSON, string(before))
+	s.TraceState().FromRaw("vendor=changed")
+	s.SetFlags(0)
+	s.SetDroppedAttributesCount(9)
+	s.SetDroppedEventsCount(9)
+	s.SetDroppedLinksCount(9)
+	s.Events().At(0).SetDroppedAttributesCount(9)
+	s.Links().At(0).TraceState().FromRaw("vendor=changed")
+	s.Links().At(0).SetFlags(0)
+	s.Links().At(0).SetDroppedAttributesCount(9)
+	s.Attributes().PutStr("audit.integrity.value", "x")
+	s.Events().At(0).Attributes().PutStr("audit.integrity.value", "x")
+	s.Links().At(0).Attributes().PutStr("audit.integrity.value", "x")
+	after, err := SerializeSpan(s, opts)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+}
+
+func TestSerializeSpanExcludePrefixes(t *testing.T) {
+	for _, level := range spanAttributeLevels {
+		t.Run(level.name, func(t *testing.T) {
+			s := ptrace.NewSpan()
+			a := level.attrs(s)
+			a.PutStr("audit.integrity.value", "signature")
+			a.PutStr("audit.verification.status", "verified")
+			a.PutStr("audit.integrity", "keep") // Matching is by prefix, not namespace.
+			a.PutEmptyMap("nested").PutStr("audit.integrity.value", "nested content")
+			opts := SerializeSpanOptions{ExcludePrefixes: []string{"audit.integrity.", "audit.verification."}}
+			got, err := SerializeSpan(s, opts)
+			require.NoError(t, err)
+			assert.Equal(t, spanAttributesJSON(level.name, `{"audit.integrity":{"stringValue":"keep"},"nested":{"audit.integrity.value":{"stringValue":"nested content"}}}`), string(got))
+
+			// The library must not implicitly filter signing attributes.
+			got, err = SerializeSpan(s, SerializeSpanOptions{})
+			require.NoError(t, err)
+			assert.Equal(t, spanAttributesJSON(level.name, `{"audit.integrity":{"stringValue":"keep"},"audit.integrity.value":{"stringValue":"signature"},"audit.verification.status":{"stringValue":"verified"},"nested":{"audit.integrity.value":{"stringValue":"nested content"}}}`), string(got))
+
+			// All filtered attributes are omitted, not encoded as an empty object.
+			got, err = SerializeSpan(s, SerializeSpanOptions{ExcludePrefixes: []string{""}})
+			require.NoError(t, err)
+			want := `{"kind":0,"status":{"code":0}}`
+			if level.name == "event" {
+				want = `{"events":[{}],"kind":0,"status":{"code":0}}`
+			} else if level.name == "link" {
+				want = `{"kind":0,"links":[{}],"status":{"code":0}}`
+			}
+			assert.Equal(t, want, string(got))
+
+			// Filter before validation/conversion: excluded content is not signed.
+			a.Clear()
+			a.PutStr("audit.integrity.bad\xff", "bad\xff")
+			a.PutDouble("audit.integrity.nan", math.NaN())
+			deep := a.PutEmptyMap("audit.integrity.deep")
+			for range DefaultMaxDepth + 1 {
+				deep = deep.PutEmptyMap("n")
+			}
+			_, err = SerializeSpan(s, opts)
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestSerializeSpanDeterministicInsertionOrder(t *testing.T) {
+	makeSpan := func(keys []string) ptrace.Span {
+		s := ptrace.NewSpan()
+		for _, level := range spanAttributeLevels {
+			a := level.attrs(s)
+			for _, key := range keys {
+				m := a.PutEmptyMap(key)
+				for _, nestedKey := range keys {
+					m.PutStr(nestedKey, nestedKey)
+				}
+			}
+		}
+		return s
+	}
+	a, err := SerializeSpan(makeSpan([]string{"z", "a", "m"}), SerializeSpanOptions{})
+	require.NoError(t, err)
+	b, err := SerializeSpan(makeSpan([]string{"m", "z", "a"}), SerializeSpanOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, a, b)
+	const nested = `{"a":{"stringValue":"a"},"m":{"stringValue":"m"},"z":{"stringValue":"z"}}`
+	const attrs = `{"a":` + nested + `,"m":` + nested + `,"z":` + nested + `}`
+	assert.Equal(t, `{"attributes":`+attrs+`,"events":[{"attributes":`+attrs+`}],"kind":0,"links":[{"attributes":`+attrs+`}],"status":{"code":0}}`, string(a))
+}
+
+func TestSerializeSpanPreservesEventAndLinkOrder(t *testing.T) {
+	s := ptrace.NewSpan()
+	s.Events().AppendEmpty().SetName("z")
+	s.Events().AppendEmpty().SetName("a")
+	s.Links().AppendEmpty().SetSpanID(pcommon.SpanID{2})
+	s.Links().AppendEmpty().SetSpanID(pcommon.SpanID{1})
+	got, err := SerializeSpan(s, SerializeSpanOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, `{"events":[{"name":"z"},{"name":"a"}],"kind":0,"links":[{"span_id":"0200000000000000"},{"span_id":"0100000000000000"}],"status":{"code":0}}`, string(got))
+
+	s.Events().At(0).SetName("a")
+	s.Events().At(1).SetName("z")
+	eventsReversed, err := SerializeSpan(s, SerializeSpanOptions{})
+	require.NoError(t, err)
+	assert.NotEqual(t, got, eventsReversed)
+	s.Links().At(0).SetSpanID(pcommon.SpanID{1})
+	s.Links().At(1).SetSpanID(pcommon.SpanID{2})
+	linksReversed, err := SerializeSpan(s, SerializeSpanOptions{})
+	require.NoError(t, err)
+	assert.NotEqual(t, eventsReversed, linksReversed)
+}
+
+func TestSerializeSpanRejectsInvalidUTF8(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		set     func(ptrace.Span)
+		context string
+	}{
+		{"span name", func(s ptrace.Span) { s.SetName("bad\xff") }, "span name"},
+		{"event name", func(s ptrace.Span) { s.Events().AppendEmpty().SetName("bad\xff") }, "event name"},
+		{"status message", func(s ptrace.Span) { s.Status().SetMessage("bad\xff") }, "status message"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := ptrace.NewSpan()
+			tc.set(s)
+			got, err := SerializeSpan(s, SerializeSpanOptions{})
+			require.ErrorContains(t, err, "invalid UTF-8")
+			assert.ErrorContains(t, err, tc.context)
+			assert.Nil(t, got)
+		})
+	}
+	for _, level := range spanAttributeLevels {
+		for _, tc := range []struct {
+			name string
+			set  func(pcommon.Map)
+		}{
+			{"attribute key", func(a pcommon.Map) { a.PutStr("bad\xff", "valid") }},
+			{"attribute string", func(a pcommon.Map) { a.PutStr("key", "bad\xff") }},
+			{"nested map key", func(a pcommon.Map) { a.PutEmptyMap("map").PutStr("bad\xff", "valid") }},
+			{"nested map string", func(a pcommon.Map) { a.PutEmptyMap("map").PutStr("key", "bad\xff") }},
+			{"nested slice string", func(a pcommon.Map) { a.PutEmptySlice("slice").AppendEmpty().SetStr("bad\xff") }},
+			{"map inside slice", func(a pcommon.Map) { a.PutEmptySlice("slice").AppendEmpty().SetEmptyMap().PutStr("bad\xff", "valid") }},
+		} {
+			t.Run(level.name+"/"+tc.name, func(t *testing.T) {
+				s := ptrace.NewSpan()
+				tc.set(level.attrs(s))
+				got, err := SerializeSpan(s, SerializeSpanOptions{})
+				require.ErrorContains(t, err, "invalid UTF-8")
+				assert.Nil(t, got)
+			})
+		}
+	}
+}
+
+func TestSerializeSpanAcceptsValidUTF8(t *testing.T) {
+	s := ptrace.NewSpan()
+	s.SetName("é<&>")
+	s.Events().AppendEmpty().SetName("決定")
+	s.Status().SetMessage("✓")
+	s.Attributes().PutEmptyMap("é").PutStr("決定", `\ud800`)
+	s.Events().At(0).Attributes().PutStr("é", "✓")
+	s.Links().AppendEmpty().Attributes().PutStr("é", "✓")
+	got, err := SerializeSpan(s, SerializeSpanOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, `{"attributes":{"é":{"決定":{"stringValue":"\\ud800"}}},"events":[{"attributes":{"é":{"stringValue":"✓"}},"name":"決定"}],"kind":0,"links":[{"attributes":{"é":{"stringValue":"✓"}}}],"name":"é<&>","status":{"code":0,"message":"✓"}}`, string(got))
+}
+
+func TestSerializeSpanRejectsNonFiniteAttributes(t *testing.T) {
+	for _, level := range spanAttributeLevels {
+		for _, number := range []struct {
+			name  string
+			value float64
+		}{{"NaN", math.NaN()}, {"positive infinity", math.Inf(1)}, {"negative infinity", math.Inf(-1)}} {
+			for _, container := range []string{"primitive", "map", "slice"} {
+				t.Run(level.name+"/"+number.name+"/"+container, func(t *testing.T) {
+					s := ptrace.NewSpan()
+					a := level.attrs(s)
+					v := a.PutEmpty("value")
+					switch container {
+					case "map":
+						v = v.SetEmptyMap().PutEmpty("nested")
+					case "slice":
+						v = v.SetEmptySlice().AppendEmpty()
+					}
+					v.SetDouble(number.value)
+					got, err := SerializeSpan(s, SerializeSpanOptions{})
+					require.Error(t, err)
+					assert.Nil(t, got)
+				})
+			}
+		}
+	}
+}
+
+func TestSerializeSpanDepthBoundaries(t *testing.T) {
+	for _, level := range spanAttributeLevels {
+		for _, container := range []string{"map", "slice"} {
+			for _, limit := range []struct {
+				name       string
+				configured int
+				effective  int
+			}{{"configured", 3, 3}, {"default", 0, DefaultMaxDepth}} {
+				t.Run(level.name+"/"+container+"/"+limit.name, func(t *testing.T) {
+					for _, depth := range []int{limit.effective, limit.effective + 1} {
+						s := ptrace.NewSpan()
+						v := level.attrs(s).PutEmpty("nested")
+						// Attribute values begin at depth zero; each container edge
+						// adds one. The scalar exactly at the cap is valid.
+						for range depth {
+							if container == "map" {
+								v = v.SetEmptyMap().PutEmpty("n")
+							} else {
+								v = v.SetEmptySlice().AppendEmpty()
+							}
+						}
+						v.SetStr("leaf")
+						got, err := SerializeSpan(s, SerializeSpanOptions{MaxDepth: limit.configured})
+						if depth == limit.effective {
+							require.NoError(t, err)
+							assert.Contains(t, string(got), `{"stringValue":"leaf"}`)
+						} else {
+							require.ErrorContains(t, err, "nesting depth limit")
+							assert.Nil(t, got)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestSerializeSpanSizeBoundaries(t *testing.T) {
+	for _, level := range spanAttributeLevels {
+		for _, limit := range []struct {
+			name       string
+			configured int
+			effective  int
+		}{{"configured", 256, 256}, {"default", 0, DefaultMaxInputBytes}} {
+			t.Run(level.name+"/"+limit.name, func(t *testing.T) {
+				const emptyAttrs = `{"value":{"stringValue":""}}`
+				overhead := len(spanAttributesJSON(level.name, emptyAttrs))
+				for _, extra := range []int{0, 1} {
+					s := ptrace.NewSpan()
+					value := strings.Repeat("a", limit.effective-overhead+extra)
+					level.attrs(s).PutStr("value", value)
+					got, err := SerializeSpan(s, SerializeSpanOptions{MaxInputBytes: limit.configured})
+					if extra == 0 {
+						require.NoError(t, err)
+						assert.Len(t, got, limit.effective)
+						assert.Equal(t, spanAttributesJSON(level.name, `{"value":{"stringValue":"`+value+`"}}`), string(got))
+					} else {
+						require.ErrorContains(t, err, "size limit")
+						assert.Nil(t, got)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestSerializeSpanSizeLimitBeforeCanonicalization(t *testing.T) {
+	s := ptrace.NewSpan()
+	s.SetName("<&>")
+	const canonical = `{"kind":0,"name":"<&>","status":{"code":0}}`
+	// encoding/json escapes each HTML character as six bytes before JCS
+	// removes those escapes. The size cap applies to that larger input.
+	const rawSize = len(canonical) + 3*5
+	got, err := SerializeSpan(s, SerializeSpanOptions{MaxInputBytes: rawSize})
+	require.NoError(t, err)
+	assert.Equal(t, canonical, string(got))
+	got, err = SerializeSpan(s, SerializeSpanOptions{MaxInputBytes: rawSize - 1})
+	require.ErrorContains(t, err, "size limit")
+	assert.Nil(t, got)
+}
+
+func TestSerializeSpanUint64Timestamps(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		timestamp pcommon.Timestamp
+		decimal   string
+	}{
+		{"MaxInt64", math.MaxInt64, "9223372036854775807"},
+		{"MaxInt64 plus one", pcommon.Timestamp(uint64(math.MaxInt64) + 1), "9223372036854775808"},
+		{"MaxUint64", math.MaxUint64, "18446744073709551615"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := ptrace.NewSpan()
+			s.SetStartTimestamp(tc.timestamp)
+			s.SetEndTimestamp(tc.timestamp)
+			s.Events().AppendEmpty().SetTimestamp(tc.timestamp)
+			got, err := SerializeSpan(s, SerializeSpanOptions{})
+			require.NoError(t, err)
+			assert.Equal(t, `{"end_time":"`+tc.decimal+`","events":[{"timestamp":"`+tc.decimal+`"}],"kind":0,"start_time":"`+tc.decimal+`","status":{"code":0}}`, string(got))
+		})
+	}
+}
+
+func TestSerializeSpanDoesNotMutate(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		opts      SerializeSpanOptions
+		wantError bool
+	}{
+		{"success", SerializeSpanOptions{ExcludePrefixes: []string{"audit.integrity."}}, false},
+		{"depth error", SerializeSpanOptions{MaxDepth: 1}, true},
+		{"size error", SerializeSpanOptions{MaxInputBytes: 1}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newCanonicalTestSpan()
+			s.Attributes().PutStr("audit.integrity.value", "signature")
+			s.Attributes().PutEmptyMap("nested").PutEmptySlice("list").AppendEmpty().SetStr("content")
+			td := ptrace.NewTraces()
+			s.CopyTo(td.ResourceSpans().AppendEmpty().ScopeSpans().AppendEmpty().Spans().AppendEmpty())
+			marshaler := &ptrace.ProtoMarshaler{}
+			before, err := marshaler.MarshalTraces(td)
+			require.NoError(t, err)
+			_, err = SerializeSpan(s, tc.opts)
+			if tc.wantError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			s.CopyTo(td.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0))
+			after, err := marshaler.MarshalTraces(td)
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+			// The serialized bytes are also ordinary valid JSON.
+			if !tc.wantError {
+				got, serializeErr := SerializeSpan(s, tc.opts)
+				require.NoError(t, serializeErr)
+				assert.True(t, json.Valid(got))
+			}
+		})
+	}
 }

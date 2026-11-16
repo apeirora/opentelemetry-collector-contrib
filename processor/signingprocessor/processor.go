@@ -166,7 +166,10 @@ func (p *signingProcessor) ConsumeTraces(ctx context.Context, td ptrace.Traces) 
 }
 
 func (p *signingProcessor) processSpan(span ptrace.Span) error {
-	spanData, err := p.serializeSpan(span)
+	opts := canonicaljson.SerializeSpanOptions{
+		ExcludePrefixes: []string{"audit.integrity."},
+	}
+	spanData, err := canonicaljson.SerializeSpan(span, opts)
 	if err != nil {
 		return fmt.Errorf("failed to serialize span: %w", err)
 	}
