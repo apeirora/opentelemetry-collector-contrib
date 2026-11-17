@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/extension/xextension/storage"
 	"go.opentelemetry.io/collector/pdata/plog"
+	"go.uber.org/zap"
 )
 
 var (
@@ -118,15 +119,45 @@ func (p *verifyProcessor) writeDeadLetter(
 	if p.storageClient == nil {
 		return errDeadLetterClient
 	}
-	payload, err := buildDeadLetterPayload(dl, p.config.FailureMode, p.config.VerificationProfile, rl, sl, lr, resourceIdx, scopeIdx, recordIdx, algorithm, logID, fail)
+	now := time.Now().UTC()
+	payload, err := buildDeadLetterPayload(dl, p.config.FailureMode, p.config.VerificationProfile, rl, sl, lr, resourceIdx, scopeIdx, recordIdx, algorithm, logID, fail, now)
 	if err != nil {
 		return err
 	}
-	p.dlqMu.Lock()
-	defer p.dlqMu.Unlock()
-	p.dlqSeq++
-	key := fmt.Sprintf("%s%s-%020d-%08d", dl.KeyPrefix, p.dlqInstance, time.Now().UTC().UnixNano(), p.dlqSeq)
+	seq := p.dlqSeq.Add(1)
+	key := fmt.Sprintf("%s%s-%020d-%08d", dl.KeyPrefix, p.dlqInstance, now.UnixNano(), seq)
 	return p.storageClient.Set(ctx, key, payload)
+}
+
+// deadLetterWriteErrors collects dead letter write failures for one batch so
+// they are logged once instead of once per record.
+type deadLetterWriteErrors struct {
+	count       int
+	first       error
+	firstReason string
+	tooLarge    error
+}
+
+func (d *deadLetterWriteErrors) add(reason string, err error) {
+	d.count++
+	if d.first == nil {
+		d.first = err
+		d.firstReason = reason
+	}
+	if errors.Is(err, errDeadLetterTooLarge) {
+		d.tooLarge = errors.Join(d.tooLarge, err)
+	}
+}
+
+func (d *deadLetterWriteErrors) log(logger *zap.Logger) {
+	if d.count == 0 {
+		return
+	}
+	logger.Error("failed to write verification failures to dead letter storage",
+		zap.Int("failed_entries", d.count),
+		zap.String("first_reason", d.firstReason),
+		zap.Error(d.first),
+	)
 }
 
 func newDeadLetterInstance() (string, error) {
@@ -150,11 +181,9 @@ func buildDeadLetterPayload(
 	resourceIdx, scopeIdx, recordIdx int,
 	algorithm, logID string,
 	fail *verifyFailure,
+	recordedAt time.Time,
 ) ([]byte, error) {
 	maxBytes := dl.MaxEntrySizeBytes
-	if maxBytes <= 0 {
-		maxBytes = defaultMaxEntrySizeBytes
-	}
 	entry := deadLetterEntry{
 		Reason:        fail.reason,
 		FailureMode:   failureMode,
@@ -164,7 +193,7 @@ func buildDeadLetterPayload(
 		ScopeIndex:    scopeIdx,
 		RecordIndex:   recordIdx,
 		Algorithm:     algorithm,
-		RecordedAt:    time.Now().UTC().Format(time.RFC3339Nano),
+		RecordedAt:    recordedAt.Format(time.RFC3339Nano),
 	}
 	if fail.err != nil {
 		entry.Error = fail.err.Error()

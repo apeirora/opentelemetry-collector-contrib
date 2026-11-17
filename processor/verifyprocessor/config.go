@@ -127,6 +127,10 @@ func createDefaultConfig() component.Config {
 		Mode:                defaultMode,
 		FailureMode:         defaultFailureMode,
 		VerificationProfile: defaultProfile,
+		DeadLetter: DeadLetterConfig{
+			KeyPrefix:         defaultDeadLetterKeyPrefix,
+			MaxEntrySizeBytes: defaultMaxEntrySizeBytes,
+		},
 	}
 }
 
@@ -212,12 +216,6 @@ func (dl *DeadLetterConfig) validate() error {
 	}
 	if dl.StorageID == nil || *dl.StorageID == (component.ID{}) {
 		return errDeadLetterNeedsStorage
-	}
-	if dl.KeyPrefix == "" {
-		dl.KeyPrefix = defaultDeadLetterKeyPrefix
-	}
-	if dl.MaxEntrySizeBytes == 0 {
-		dl.MaxEntrySizeBytes = defaultMaxEntrySizeBytes
 	}
 	if dl.MaxEntrySizeBytes < minEntrySizeBytes || dl.MaxEntrySizeBytes > maxEntrySizeBytes {
 		return errInvalidDeadLetterSize

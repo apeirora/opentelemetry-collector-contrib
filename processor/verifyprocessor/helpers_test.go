@@ -107,17 +107,25 @@ func TestConfigValidate(t *testing.T) {
 	})
 
 	t.Run("dead letter defaults and modes", func(t *testing.T) {
-		cfg := &Config{
-			KeySource: KeySourceConfig{Type: keySourceEnv, Env: &EnvKeyConfig{HMACKey: "k"}},
-			DeadLetter: DeadLetterConfig{
-				Enabled:      true,
-				StorageID:    ptrID(component.MustNewID("file")),
-				FailureModes: []string{failureModeStrict, failureModeDrop},
-			},
-		}
+		cfg := createDefaultConfig().(*Config)
+		cfg.KeySource = KeySourceConfig{Type: keySourceEnv, Env: &EnvKeyConfig{HMACKey: "k"}}
+		cfg.DeadLetter.Enabled = true
+		cfg.DeadLetter.StorageID = ptrID(component.MustNewID("file"))
+		cfg.DeadLetter.FailureModes = []string{failureModeStrict, failureModeDrop}
 		require.NoError(t, cfg.Validate())
 		assert.Equal(t, defaultDeadLetterKeyPrefix, cfg.DeadLetter.KeyPrefix)
 		assert.Equal(t, defaultMaxEntrySizeBytes, cfg.DeadLetter.MaxEntrySizeBytes)
+	})
+
+	t.Run("dead letter zero size rejected", func(t *testing.T) {
+		cfg := &Config{
+			KeySource: KeySourceConfig{Type: keySourceEnv, Env: &EnvKeyConfig{HMACKey: "k"}},
+			DeadLetter: DeadLetterConfig{
+				Enabled:   true,
+				StorageID: ptrID(component.MustNewID("file")),
+			},
+		}
+		assert.ErrorIs(t, cfg.Validate(), errInvalidDeadLetterSize)
 	})
 
 	t.Run("dead letter invalid size", func(t *testing.T) {
@@ -148,9 +156,10 @@ func TestConfigValidate(t *testing.T) {
 		cfg := &Config{
 			KeySource: KeySourceConfig{Type: keySourceEnv, Env: &EnvKeyConfig{HMACKey: "k"}},
 			DeadLetter: DeadLetterConfig{
-				Enabled:   true,
-				StorageID: ptrID(component.MustNewID("file")),
-				Reasons:   []string{"nope"},
+				Enabled:           true,
+				StorageID:         ptrID(component.MustNewID("file")),
+				MaxEntrySizeBytes: defaultMaxEntrySizeBytes,
+				Reasons:           []string{"nope"},
 			},
 		}
 		assert.ErrorIs(t, cfg.Validate(), errInvalidDeadLetterReason)
@@ -160,9 +169,10 @@ func TestConfigValidate(t *testing.T) {
 		cfg := &Config{
 			KeySource: KeySourceConfig{Type: keySourceEnv, Env: &EnvKeyConfig{HMACKey: "k"}},
 			DeadLetter: DeadLetterConfig{
-				Enabled:      true,
-				StorageID:    ptrID(component.MustNewID("file")),
-				FailureModes: []string{"pass"},
+				Enabled:           true,
+				StorageID:         ptrID(component.MustNewID("file")),
+				MaxEntrySizeBytes: defaultMaxEntrySizeBytes,
+				FailureModes:      []string{"pass"},
 			},
 		}
 		assert.ErrorIs(t, cfg.Validate(), errInvalidDeadLetterMode)

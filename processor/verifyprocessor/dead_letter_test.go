@@ -22,6 +22,8 @@ import (
 	"go.opentelemetry.io/collector/extension/xextension/storage"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/processor/processortest"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/extension/storage/storagetest"
 )
@@ -221,6 +223,26 @@ func TestDeadLetterStorageErrors(t *testing.T) {
 		assert.Empty(t, store.values())
 	})
 
+	t.Run("continue logs once per batch", func(t *testing.T) {
+		store := newMemStorage()
+		store.setErr = setErr
+		p := dlqProc(t, failureModeMark, DeadLetterConfig{}, store)
+		core, logs := observer.New(zap.ErrorLevel)
+		p.logger = zap.New(core)
+		ld := failedLogs("rec-1", "one")
+		records := ld.ResourceLogs().At(0).ScopeLogs().At(0).LogRecords()
+		records.AppendEmpty().Body().SetStr("two")
+		records.AppendEmpty().Body().SetStr("three")
+
+		require.NoError(t, p.ConsumeLogs(t.Context(), ld))
+		entries := logs.All()
+		require.Len(t, entries, 1)
+		fields := entries[0].ContextMap()
+		assert.Equal(t, int64(3), fields["failed_entries"])
+		assert.Equal(t, reasonMissingIntegrityValue, fields["first_reason"])
+		assert.Equal(t, setErr.Error(), fields["error"])
+	})
+
 	t.Run("fail closed", func(t *testing.T) {
 		store := newMemStorage()
 		store.setErr = setErr
@@ -343,11 +365,9 @@ func TestDeadLetterStartShutdown(t *testing.T) {
 	cfg.FailureMode = failureModeMark
 	cfg.VerificationProfile = "default"
 	cfg.KeySource = KeySourceConfig{Type: keySourceFile, File: &FileKeyConfig{HMACKey: "testdata/dev_hmac_key.txt"}}
-	cfg.DeadLetter = DeadLetterConfig{
-		Enabled:   true,
-		StorageID: ptrID(storagetest.NewStorageID("dlq")),
-		KeyPrefix: "audit/",
-	}
+	cfg.DeadLetter.Enabled = true
+	cfg.DeadLetter.StorageID = ptrID(storagetest.NewStorageID("dlq"))
+	cfg.DeadLetter.KeyPrefix = "audit/"
 	require.NoError(t, cfg.Validate())
 
 	sink := &consumertest.LogsSink{}

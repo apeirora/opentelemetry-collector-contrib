@@ -114,8 +114,8 @@ directory is already separate per host.
 The JSON value has `reason`, `error` (when the failure has one), `failure_mode`,
 `profile`, `log_id` (from `audit.record.id`), `resource_index`, `scope_index`,
 `record_index`, `algorithm`, and `recorded_at`. `logs` is an OTLP JSON document.
-`include_record` adds the log record as it was received, before verification stamps. `include_resource` adds the resource to
-that document. An empty `reasons` or `failure_modes` list stores every failure.
+`include_record` adds the log record as it was received, before verification
+stamps. `include_resource` adds the resource to that document. An empty `reasons` or `failure_modes` list stores every failure.
 If the entry is larger than `max_entry_size_bytes`, `logs` is dropped and
 `truncated` is set. `max_entry_size_bytes` must be from 1024 to 8388608. If the
 entry is still too large, that record is not stored. The processor keeps
@@ -125,7 +125,8 @@ then returns a permanent error and does not export or stamp the batch. With
 `failure_mode`.
 
 `fail_on_storage_error: false` logs other storage errors and continues with
-`failure_mode`. `true` returns the storage error immediately and does not export
+`failure_mode`. Write failures are logged once per batch with the number of
+failed entries and the first error. `true` returns the storage error immediately and does not export
 or stamp the batch. A later retry can write another entry for the same record.
 
 `ttl`, `deduplicate_by_record_id`, `maintain_index`, and `partition_by_stream`

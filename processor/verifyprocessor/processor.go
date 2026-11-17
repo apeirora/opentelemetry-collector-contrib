@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"unicode/utf8"
 
 	"github.com/gowebpki/jcs"
@@ -147,8 +147,7 @@ type verifyProcessor struct {
 	nextConsumer  consumer.Logs
 	provider      KeyMaterialProvider
 	storageClient storage.Client
-	dlqMu         sync.Mutex
-	dlqSeq        uint64
+	dlqSeq        atomic.Uint64
 	dlqInstance   string
 }
 
@@ -216,7 +215,7 @@ func (p *verifyProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error {
 		scopeOutcomes [][]recordOutcome
 	}
 	verified := make([]verifiedResource, 0, resourceLogs.Len())
-	var deadLetterTooLarge error
+	var deadLetterErrs deadLetterWriteErrors
 
 	for i := 0; i < resourceLogs.Len(); i++ {
 		rl := resourceLogs.At(i)
@@ -253,20 +252,10 @@ func (p *verifyProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error {
 					zap.Error(fail.err),
 				)
 				if err := p.writeDeadLetter(ctx, rl, sl, lr, i, j, k, algorithm, outcomes[k].id, fail); err != nil {
-					if errors.Is(err, errDeadLetterTooLarge) {
-						deadLetterTooLarge = errors.Join(deadLetterTooLarge, err)
-						p.logger.Error("failed to write verification failure to dead letter storage",
-							zap.String("reason", fail.reason),
-							zap.Error(err),
-						)
-					} else if p.config.DeadLetter.failOnStorageError() {
+					if !errors.Is(err, errDeadLetterTooLarge) && p.config.DeadLetter.failOnStorageError() {
 						return fmt.Errorf("dead letter write: %w", err)
-					} else {
-						p.logger.Error("failed to write verification failure to dead letter storage",
-							zap.String("reason", fail.reason),
-							zap.Error(err),
-						)
 					}
+					deadLetterErrs.add(fail.reason, err)
 				}
 				if p.config.FailureMode != failureModeMark {
 					failures = append(failures, logFailure{
@@ -282,8 +271,9 @@ func (p *verifyProcessor) ConsumeLogs(ctx context.Context, ld plog.Logs) error {
 		verified = append(verified, verifiedResource{rl: rl, scopeOutcomes: scopeOutcomes})
 	}
 
-	if deadLetterTooLarge != nil && p.config.DeadLetter.failOnStorageError() {
-		return consumererror.NewPermanent(fmt.Errorf("dead letter write: %w", deadLetterTooLarge))
+	deadLetterErrs.log(p.logger)
+	if deadLetterErrs.tooLarge != nil && p.config.DeadLetter.failOnStorageError() {
+		return consumererror.NewPermanent(fmt.Errorf("dead letter write: %w", deadLetterErrs.tooLarge))
 	}
 
 	if stamp {
