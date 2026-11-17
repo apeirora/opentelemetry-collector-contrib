@@ -81,11 +81,14 @@ func fingerprint(cert *x509.Certificate) string {
 
 func newVerifyProc(t *testing.T, cfg *Config, prov KeyMaterialProvider) *verifyProcessor {
 	t.Helper()
+	instance, err := newDeadLetterInstance()
+	require.NoError(t, err)
 	return &verifyProcessor{
 		config:       cfg,
 		logger:       zap.NewNop(),
 		nextConsumer: consumertest.NewNop(),
 		provider:     prov,
+		dlqInstance:  instance,
 	}
 }
 
