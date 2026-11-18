@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/pdata/pcommon"
+	"go.opentelemetry.io/collector/pdata/plog"
 )
 
 func TestValueToInterface(t *testing.T) {
@@ -261,8 +262,8 @@ func TestValueToInterface_EmptyMap(t *testing.T) {
 func TestValueToInterface_EmptyValueSerializesToNull(t *testing.T) {
 	v := pcommon.NewValueEmpty()
 
-	// ValueToInterface should return nil for empty values
-	result, err := ValueToInterface(v, 0, 128)
+	// valueToInterface should return nil for empty values
+	result, err := valueToInterface(v, 0, 128)
 	require.NoError(t, err)
 	require.Nil(t, result, "ValueTypeEmpty should return nil")
 
@@ -284,10 +285,10 @@ func TestValueToInterface_EmptyValueVsEmptyMap(t *testing.T) {
 	emptyValue := pcommon.NewValueEmpty()
 	emptyMap := pcommon.NewValueMap()
 
-	resultEmpty, err := ValueToInterface(emptyValue, 0, 128)
+	resultEmpty, err := valueToInterface(emptyValue, 0, 128)
 	require.NoError(t, err)
 
-	resultMap, err := ValueToInterface(emptyMap, 0, 128)
+	resultMap, err := valueToInterface(emptyMap, 0, 128)
 	require.NoError(t, err)
 
 	// They should be different types
@@ -313,10 +314,10 @@ func TestValueToInterface_Int64Precision(t *testing.T) {
 	v1 := pcommon.NewValueInt(base)
 	v2 := pcommon.NewValueInt(base + 1)
 
-	result1, err := ValueToInterface(v1, 0, 128)
+	result1, err := valueToInterface(v1, 0, 128)
 	require.NoError(t, err)
 
-	result2, err := ValueToInterface(v2, 0, 128)
+	result2, err := valueToInterface(v2, 0, 128)
 	require.NoError(t, err)
 
 	assert.NotEqual(t, result1, result2,
@@ -389,10 +390,10 @@ func TestValueToInterface_ScalarTypeDistinction(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result1, err := ValueToInterface(tc.value1, 0, 128)
+			result1, err := valueToInterface(tc.value1, 0, 128)
 			require.NoError(t, err)
 
-			result2, err := ValueToInterface(tc.value2, 0, 128)
+			result2, err := valueToInterface(tc.value2, 0, 128)
 			require.NoError(t, err)
 
 			if tc.distinct {
@@ -406,11 +407,11 @@ func TestValueToInterface_ScalarTypeDistinction(t *testing.T) {
 	}
 }
 
-// TestValueToInterface_Float64AdjacentValuesDistinct verifies that adjacent
-// IEEE-754 doubles (differing by 1 ULP) produce distinct results. JCS uses the
+// TestSerializeLogRecord_Float64AdjacentValuesDistinct verifies that adjacent
+// IEEE-754 doubles (differing by 1 ULP) produce distinct canonical bytes. JCS uses the
 // shortest round-trip representation, so every finite non-zero double maps to
 // a unique string.
-func TestValueToInterface_Float64AdjacentValuesDistinct(t *testing.T) {
+func TestSerializeLogRecord_Float64AdjacentValuesDistinct(t *testing.T) {
 	tests := []struct {
 		name string
 		a, b float64
@@ -418,34 +419,36 @@ func TestValueToInterface_Float64AdjacentValuesDistinct(t *testing.T) {
 		{
 			name: "small positive: 1.0 vs next ULP",
 			a:    1.0,
-			b:    1.0000000000000002, // nextafter(1.0, +inf)
+			b:    math.Nextafter(1.0, math.Inf(1)),
 		},
 		{
 			name: "large positive near float64 max",
 			a:    1e300,
-			b:    1.0000000000000002e+300, // approximately nextafter(1e300, +inf)
+			b:    math.Nextafter(1e300, math.Inf(1)),
 		},
 		{
 			name: "small negative: -1.0 vs next ULP toward zero",
 			a:    -1.0,
-			b:    -0.9999999999999999, // nextafter(-1.0, 0)
+			b:    math.Nextafter(-1.0, 0),
 		},
 		{
 			name: "values near 2^53 (where int64 precision matters)",
 			a:    9007199254740992.0, // 2^53
-			b:    9007199254740994.0, // 2^53 + 2 (next representable double)
+			b:    math.Nextafter(9007199254740992.0, math.Inf(1)),
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			v1 := pcommon.NewValueDouble(tc.a)
-			v2 := pcommon.NewValueDouble(tc.b)
+			lr1 := plog.NewLogRecord()
+			lr1.Body().SetDouble(tc.a)
+			lr2 := plog.NewLogRecord()
+			lr2.Body().SetDouble(tc.b)
 
-			result1, err := ValueToInterface(v1, 0, 128)
+			result1, err := SerializeLogRecord(lr1, SerializeLogRecordOptions{})
 			require.NoError(t, err)
 
-			result2, err := ValueToInterface(v2, 0, 128)
+			result2, err := SerializeLogRecord(lr2, SerializeLogRecordOptions{})
 			require.NoError(t, err)
 
 			assert.NotEqual(t, result1, result2,
@@ -454,34 +457,32 @@ func TestValueToInterface_Float64AdjacentValuesDistinct(t *testing.T) {
 	}
 }
 
-// TestValueToInterface_Float64NegativeZeroCollision documents that -0.0 and +0.0
-// produce identical results. This is mandated by JCS spec (ES6 §7.1.12.1) and is
-// the ONLY float64 precision issue. It is not a bug; it's a deliberate spec requirement.
-func TestValueToInterface_Float64NegativeZeroCollision(t *testing.T) {
-	vPos := pcommon.NewValueDouble(+0.0)
-	vNeg := pcommon.NewValueDouble(-0.0)
+// TestSerializeLogRecord_Float64NegativeZeroCollision documents the JCS
+// requirement that negative and positive zero produce identical canonical bytes.
+func TestSerializeLogRecord_Float64NegativeZeroCollision(t *testing.T) {
+	lrPos := plog.NewLogRecord()
+	lrPos.Body().SetDouble(0)
+	lrNeg := plog.NewLogRecord()
+	lrNeg.Body().SetDouble(math.Copysign(0, -1))
+	require.False(t, math.Signbit(lrPos.Body().Double()))
+	require.True(t, math.Signbit(lrNeg.Body().Double()))
 
-	resultPos, err := ValueToInterface(vPos, 0, 128)
+	resultPos, err := SerializeLogRecord(lrPos, SerializeLogRecordOptions{})
 	require.NoError(t, err)
 
-	resultNeg, err := ValueToInterface(vNeg, 0, 128)
+	resultNeg, err := SerializeLogRecord(lrNeg, SerializeLogRecordOptions{})
 	require.NoError(t, err)
 
 	// This collision is expected and spec-mandated
 	assert.Equal(t, resultPos, resultNeg,
 		"JCS spec requires +0.0 and -0.0 to produce identical output")
 
-	// Both should serialize as {"doubleValue":0}
-	assert.Equal(t, map[string]any{"doubleValue": float64(0)}, resultPos)
+	assert.Equal(t, `{"body":{"doubleValue":0}}`, string(resultPos))
 }
 
-// TestValueToInterface_Float64SpecialValuesRejected verifies that NaN and ±Infinity
-// are rejected by the JCS transformation (they are invalid JSON numbers).
-func TestValueToInterface_Float64SpecialValuesRejected(t *testing.T) {
-	// Note: The JCS library will reject these during Transform, not during
-	// valueToInterface. We test that the full serialization path rejects them.
-	// This test documents expected behavior - the actual rejection happens in marshalJCS.
-
+// TestSerializeLogRecord_Float64SpecialValuesRejected verifies that NaN and
+// infinities are rejected during JSON marshaling, before JCS transformation.
+func TestSerializeLogRecord_Float64SpecialValuesRejected(t *testing.T) {
 	tests := []struct {
 		name  string
 		value float64
@@ -493,40 +494,43 @@ func TestValueToInterface_Float64SpecialValuesRejected(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			v := pcommon.NewValueDouble(tc.value)
-
-			// valueToInterface itself accepts these
-			result, err := ValueToInterface(v, 0, 128)
-			require.NoError(t, err)
-
-			// But they should fail during JSON marshaling
-			_, err = json.Marshal(result)
-			require.Error(t, err, "expected error marshaling %s to JSON", tc.name)
+			lr := plog.NewLogRecord()
+			lr.Body().SetDouble(tc.value)
+			result, err := SerializeLogRecord(lr, SerializeLogRecordOptions{})
+			require.Error(t, err, "expected error serializing %s", tc.name)
+			assert.Nil(t, result)
 		})
 	}
 }
 
-// TestValueToInterface_Float64SerializationFormat verifies the literal form of
-// well-known doubles matches RFC 8785 §3.2.2.3 test vectors.
-func TestValueToInterface_Float64SerializationFormat(t *testing.T) {
+// TestSerializeLogRecord_Float64SerializationFormat verifies canonical number
+// formatting, including the fixed/exponential notation boundaries in RFC 8785.
+func TestSerializeLogRecord_Float64SerializationFormat(t *testing.T) {
 	tests := []struct {
 		name  string
 		value float64
-		want  float64 // Expected value in the doubleValue wrapper
+		want  string
 	}{
-		{"1.0 serializes as integer when exact", 1.0, 1.0},
-		{"1.5 keeps decimal", 1.5, 1.5},
-		{"negative value", -2.5, -2.5},
-		{"small positive", 0.5, 0.5},
+		{"1.0 serializes as integer when exact", 1.0, "1"},
+		{"1.5 keeps decimal", 1.5, "1.5"},
+		{"negative value", -2.5, "-2.5"},
+		{"small positive", 0.5, "0.5"},
+		{"small exponential", 1e-7, "1e-7"},
+		{"small fixed", 1e-6, "0.000001"},
+		{"large fixed", 1e20, "100000000000000000000"},
+		{"large exponential", 1e21, "1e+21"},
+		{"smallest positive", math.SmallestNonzeroFloat64, "5e-324"},
+		{"largest finite", math.MaxFloat64, "1.7976931348623157e+308"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			v := pcommon.NewValueDouble(tc.value)
-			result, err := ValueToInterface(v, 0, 128)
+			lr := plog.NewLogRecord()
+			lr.Body().SetDouble(tc.value)
+			result, err := SerializeLogRecord(lr, SerializeLogRecordOptions{})
 			require.NoError(t, err)
 
-			assert.Equal(t, map[string]any{"doubleValue": tc.want}, result)
+			assert.Equal(t, `{"body":{"doubleValue":`+tc.want+`}}`, string(result))
 		})
 	}
 }
@@ -553,7 +557,7 @@ func TestValueToInterface_SliceErrorPropagation(t *testing.T) {
 	slice.Slice().AppendEmpty().SetInt(42)
 
 	// Call with maxDepth too low to process the second element
-	_, err := ValueToInterface(slice, 0, 5)
+	_, err := valueToInterface(slice, 0, 5)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nesting depth limit",
 		"error from nested element should propagate through slice")
@@ -579,7 +583,7 @@ func TestValueToInterface_MapErrorPropagation(t *testing.T) {
 	m.Map().PutInt("another_valid", 123)
 
 	// Call with maxDepth too low to process the deep_key value
-	_, err := ValueToInterface(m, 0, 5)
+	_, err := valueToInterface(m, 0, 5)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nesting depth limit",
 		"error from nested map value should propagate")

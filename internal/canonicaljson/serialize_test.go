@@ -327,6 +327,40 @@ func TestMarshalJCS_ExceedsSize(t *testing.T) {
 	assert.Contains(t, err.Error(), "exceeds size limit")
 }
 
+func TestSerializeLogRecordUint64Timestamps(t *testing.T) {
+	for _, field := range []struct {
+		name string
+		set  func(plog.LogRecord, pcommon.Timestamp)
+	}{
+		{"timestamp", plog.LogRecord.SetTimestamp},
+		{"observed_timestamp", plog.LogRecord.SetObservedTimestamp},
+	} {
+		for _, tc := range []struct {
+			name      string
+			timestamp pcommon.Timestamp
+			decimal   string
+		}{
+			{"zero", 0, ""},
+			{"one", 1, "1"},
+			{"MaxInt64", math.MaxInt64, "9223372036854775807"},
+			{"MaxInt64 plus one", math.MaxInt64 + 1, "9223372036854775808"},
+			{"MaxUint64", math.MaxUint64, "18446744073709551615"},
+		} {
+			t.Run(field.name+"/"+tc.name, func(t *testing.T) {
+				lr := plog.NewLogRecord()
+				field.set(lr, tc.timestamp)
+				got, err := SerializeLogRecord(lr, SerializeLogRecordOptions{})
+				require.NoError(t, err)
+				if tc.timestamp == 0 {
+					assert.Equal(t, "{}", string(got))
+				} else {
+					assert.Equal(t, `{"`+field.name+`":"`+tc.decimal+`"}`, string(got))
+				}
+			})
+		}
+	}
+}
+
 func TestSerializeLogRecord_Int64Timestamps(t *testing.T) {
 	lr := plog.NewLogRecord()
 	lr.Body().SetStr("test")

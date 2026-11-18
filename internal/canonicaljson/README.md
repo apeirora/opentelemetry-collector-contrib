@@ -58,12 +58,13 @@ lists retain their original order, including entries with no included fields.
 Events include non-empty names, non-zero timestamps, and filtered attributes;
 links include non-empty trace/span IDs and filtered attributes.
 Trace state, flags, and all dropped counts are excluded.
-All timestamps are unsigned decimal nanoseconds strings, preserving the full
-`uint64` range without converting through `time.Time`.
 
-For span timestamps greater than `9223372036854775807`, this differs from the
-previous signing-processor serializer's signed `int64` conversion. Signatures
-created with that older encoding are not compatible with the unsigned payload.
+### Timestamp Compatibility
+
+All log record and span timestamps are unsigned decimal nanoseconds strings,
+preserving the full `uint64` range without converting through `time.Time`.
+This applies to log `timestamp` and `observed_timestamp`, span `start_time`
+and `end_time`, and span event `timestamp`.
 
 ### Custom Limits
 
@@ -146,8 +147,8 @@ Values are wrapped with type information to preserve exact types during verifica
 | Feature            | Canonical JSON (RFC 8785) | OTLP/JSON           |
 |--------------------|---------------------------|---------------------|
 | **Purpose**        | Cryptographic signing     | Telemetry transport |
-| **Determinism**    | ✅ Guaranteed              | ❌ Not guaranteed    |
-| **Key Ordering**   | ✅ Lexicographic           | ❌ Unspecified       |
+| **Determinism**    | ✅ Guaranteed             | ❌ Not guaranteed   |
+| **Key Ordering**   | ✅ Lexicographic          | ❌ Unspecified      |
 | **Value Encoding** | Type-wrapped              | Direct              |
 | **Use Case**       | Audit integrity           | Data exchange       |
 

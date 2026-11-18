@@ -11,13 +11,6 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 )
 
-// ValueToInterface converts pcommon.Value to Go interface{} for JSON serialization.
-// Wraps primitive types in maps with typed keys per OTLP JSON encoding.
-// This function is exported for testing purposes.
-func ValueToInterface(v pcommon.Value, depth, maxDepth int) (any, error) {
-	return valueToInterface(v, depth, maxDepth)
-}
-
 // valueToInterface converts pcommon.Value to Go interface{} for JSON serialization.
 // Wraps primitive types in maps with typed keys per OTLP JSON encoding.
 func valueToInterface(v pcommon.Value, depth, maxDepth int) (any, error) {
